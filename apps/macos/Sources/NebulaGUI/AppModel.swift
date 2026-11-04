@@ -60,6 +60,12 @@ extension BackendClient: AppBackend {}
     var selected: NetworkProfile? { profiles.first { $0.id == selectedID } }
     var active: NetworkProfile? { profiles.first { $0.id == status.profileID } }
     var isCurrentStarted: Bool { status.isStarted && status.profileID == selectedID }
+    var connectionActionTitle: String {
+        isCurrentStarted ? "断开连接" : !authorization.available ? "启用连接后台" : status.isStarted ? "切换并连接" : "连接网络"
+    }
+    var menuActionTitle: String {
+        status.isStarted ? "断开连接" : !authorization.available ? "启用连接后台" : "连接所选网络"
+    }
     var statusText: String {
         if busy { return "正在处理" }
         if status.isStarted { return "隧道已启动" }
@@ -184,8 +190,8 @@ extension BackendClient: AppBackend {}
     }
     func connectSelected() async {
         guard !busy, !shuttingDown else { return }
-        if !authorization.available { upgradingAuthorization = false; showAuthorizationReview = true; return }
         if isCurrentStarted { await disconnect(); return }
+        if !authorization.available { upgradingAuthorization = false; showAuthorizationReview = true; return }
         guard let selected else { return }
         recoveryTask?.cancel(); recoveryTask = nil
         let generation = recovery.userConnect(selected.id)

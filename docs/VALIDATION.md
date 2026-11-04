@@ -139,3 +139,12 @@ Go race 全套、27 个 Swift 测试及 4 项 AppKit 退出回归通过。新增
 8 个模型测试覆盖：隔离初始化、连接中取消后启动响应迟到、配置切换先清理、清理失败不启动第二配置、退出后连接响应、状态查询响应迟到、恢复等待中断开，以及恢复中后台失败。测试替身对未预期请求立即失败，清理未完成的 continuation。
 
 验证命令：`NEBULA_GUI_APP_OUTPUT="$PWD/build/Issue2/Nebula.app" bash scripts/test.sh`、`(cd backend && go vet ./...)`、`git diff --check`。完整脚本通过 Go race、27 个原有 Swift 测试、8 个新增模型测试及 4 个 AppKit 退出场景；架构审查发现的测试挂起风险修正后重新执行模型测试。产物未替换运行中的 App，未安装组件或操作真实网络。授权健康异常的主窗口入口单独由 Issue #1 回归与修复。
+
+
+## Issue #1：授权健康异常时仍可断开（2026-11-04）
+
+先在未修复模型运行回归：testPrimaryDisconnectSurvivesUnavailableAuthorizationHealth 失败，未收到 disconnect 请求，状态保持 started 且授权面板被打开。根因为 connectSelected() 把新连接的授权检查置于已有连接的断开判断之前。修复后优先断开，主窗口／菜单栏按钮均保持红色断开文字与停止图标；健康状态不一致时，提示先尝试断开并刷新。未连接时仍需正常授权。
+
+独立目录执行 scripts/test.sh 通过 Go race、27 个客户端测试、12 个实际模型测试和 4 个 AppKit 退出场景。新增 4 项覆盖授权异常断开、菜单对活动连接的断开、未连接的授权引导，以及断开失败时保留清理不确定状态。最终文字调整后重新执行模型测试。Go vet 在本批次通过。
+
+另编译生产 MainView／MenuContent 与隔离模型，以虚构身份同时展示两处入口，已查看截图确认红色断开按钮。该界面验证不代表实机隧道断开；当前运行的 App 和 root 组件未替换。此分支带入 Issue #2 的测试基础，合并需先处理相应 PR 依赖。安全审查未发现阻断问题。
