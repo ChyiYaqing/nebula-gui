@@ -6,6 +6,7 @@ let package = Package(
     targets: [
         .target(name: "NebulaClient"),
         .executableTarget(name: "NebulaGUI", dependencies: ["NebulaClient"]),
-        .testTarget(name: "NebulaClientTests", dependencies: ["NebulaClient"])
+        .testTarget(name: "NebulaClientTests", dependencies: ["NebulaClient"]),
+        .testTarget(name: "NebulaGUITests", dependencies: ["NebulaGUI", "NebulaClient"])
     ]
 )
