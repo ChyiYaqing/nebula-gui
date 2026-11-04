@@ -23,6 +23,6 @@ public enum CertificateReminders {
                 result.append(CertificateReminder(id: identifierPrefix + profile.id + "." + profile.fingerprint + ".\(days)", fireAt: now.addingTimeInterval(1), days: days))
             }
         }
-        return Array(result.sorted { $0.fireAt == $1.fireAt ? $0.id < $1.id : $0.fireAt < $1.fireAt }.prefix(60))
+        return result.sorted { $0.fireAt == $1.fireAt ? $0.id < $1.id : $0.fireAt < $1.fireAt }
     }
 }

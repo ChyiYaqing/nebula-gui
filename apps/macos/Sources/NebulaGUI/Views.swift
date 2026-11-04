@@ -225,9 +225,7 @@ struct MainView: View {
                 }
             }
             Divider()
-            Toggle("证书到期通知", isOn: Binding(get: { model.notificationsEnabled }, set: { enabled in Task { await model.setNotifications(enabled) } }))
-                .toggleStyle(.checkbox).disabled(model.notificationsBusy)
-            Text(model.notificationText).foregroundStyle(.secondary)
+            CertificateNotificationSettings(model: model)
             Divider()
             if model.status.profileID != profile.id {
                 Text("此网络当前未连接。").font(.caption).foregroundStyle(.secondary)
@@ -375,5 +373,21 @@ struct AuthorizationReviewView: View {
                 }.buttonStyle(.borderedProminent).disabled(!consent || model.busy)
             }
         }.padding(28).frame(width: 570).tint(Palette.accent).interactiveDismissDisabled(model.busy)
+    }
+}
+
+struct CertificateNotificationSettings: View {
+    @ObservedObject var model: AppModel
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Toggle("证书到期通知", isOn: Binding(get: { model.notificationsEnabled }, set: { enabled in Task { await model.setNotifications(enabled) } }))
+                .toggleStyle(.checkbox).disabled(model.notificationsBusy)
+            Text(model.notificationText).foregroundStyle(.secondary)
+            HStack {
+                Button("发送测试通知") { Task { await model.sendTestNotification() } }.disabled(model.notificationsBusy)
+                Button("打开系统设置") { NSWorkspace.shared.open(URL(fileURLWithPath: "/System/Applications/System Settings.app")) }
+            }
+            Text("App 运行时每 5 分钟及回到前台时补排提醒；退出后仅保留系统已安排的提醒。").foregroundStyle(.secondary)
+        }
     }
 }
