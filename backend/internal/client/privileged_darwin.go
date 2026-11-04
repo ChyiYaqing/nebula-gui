@@ -11,10 +11,13 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/sys/unix"
 )
+
+const HelperRelease = "0.3.0"
 
 const HelperSocket = "/private/var/run/nebula-gui/helper.sock"
 const HelperExecutable = "/Library/PrivilegedHelperTools/net.nebula.gui/nebula-gui-helper"
@@ -22,9 +25,11 @@ const HelperLabel = "net.nebula.gui.helper"
 const helperMaxFrame = 3 << 20
 
 type AuthorizationStatus struct {
-	Available bool   `json:"available"`
-	Revision  string `json:"revision,omitempty"`
-	Reason    string `json:"reason,omitempty"`
+	Available      bool   `json:"available"`
+	Revision       string `json:"revision,omitempty"`
+	Reason         string `json:"reason,omitempty"`
+	HelperRelease  string `json:"helperRelease,omitempty"`
+	UpdateRequired bool   `json:"updateRequired"`
 }
 type helperRequest struct {
 	Version int    `json:"version"`
@@ -33,12 +38,14 @@ type helperRequest struct {
 	Config  string `json:"config,omitempty"`
 }
 type helperReply struct {
-	Version  int      `json:"version"`
-	ID       string   `json:"id"`
-	Revision string   `json:"revision"`
-	Started  bool     `json:"started"`
-	Peers    []Peer   `json:"peers"`
-	Error    *Problem `json:"error,omitempty"`
+	Version       int      `json:"version"`
+	ID            string   `json:"id"`
+	Revision      string   `json:"revision"`
+	Started       bool     `json:"started"`
+	Peers         []Peer   `json:"peers"`
+	Error         *Problem `json:"error,omitempty"`
+	HelperRelease string   `json:"helperRelease,omitempty"`
+	Clean         bool     `json:"clean,omitempty"`
 }
 
 func peerUID(conn *net.UnixConn) (uint32, error) {
@@ -74,12 +81,13 @@ func helperUnavailable() error {
 // PrivilegedEngine only sends validated inline config, never commands or file paths.
 // A root helper owns the tunnel only while this authenticated connection is alive.
 type PrivilegedEngine struct {
-	socket    string
-	serverUID uint32
-	conn      *net.UnixConn
-	reader    *bufio.Reader
-	nextID    uint64
-	warning   error
+	socket        string
+	serverUID     uint32
+	conn          *net.UnixConn
+	reader        *bufio.Reader
+	nextID        uint64
+	warning       error
+	helperRelease string
 }
 
 func NewPrivilegedEngine() *PrivilegedEngine {
@@ -139,7 +147,7 @@ func (e *PrivilegedEngine) Authorization() AuthorizationStatus {
 	if err != nil {
 		return AuthorizationStatus{Reason: "unavailable"}
 	}
-	return AuthorizationStatus{Available: true, Revision: reply.Revision}
+	return AuthorizationStatus{Available: true, Revision: reply.Revision, HelperRelease: reply.HelperRelease, UpdateRequired: reply.HelperRelease != HelperRelease}
 }
 func (e *PrivilegedEngine) exchange(method, config string) (helperReply, error) {
 	if e.conn == nil {
@@ -160,6 +168,7 @@ func (e *PrivilegedEngine) Start(data []byte) error {
 	e.conn = conn
 	e.reader = bufio.NewReader(conn)
 	reply, err := e.exchange("connect", string(data))
+	e.helperRelease = reply.HelperRelease
 	if err != nil || !reply.Started {
 		e.conn.Close()
 		e.conn = nil
@@ -176,6 +185,49 @@ func (e *PrivilegedEngine) Start(data []byte) error {
 		return problem("start_failed", "连接后台未能启动隧道。", "")
 	}
 	return nil
+}
+
+// RecoverChecked clears uncertainty only after the authenticated component proves
+// no previous controller still owns a tunnel. It never disconnects another owner.
+func (e *PrivilegedEngine) RecoverChecked() error {
+	e.warning = problem("cleanup_incomplete", "旧连接尚未获得清理确认。", "")
+	if e.conn != nil {
+		e.conn.Close()
+		e.conn = nil
+		e.reader = nil
+	}
+	conn, err := e.dial()
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	reply, err := helperExchange(conn, bufio.NewReader(conn), helperRequest{Version: 1, ID: "recover", Method: "confirm_cleanup"})
+	if err != nil {
+		// Transport/protocol failure is uncertainty, not evidence of an old
+		// component. Only a correlated, valid reply can identify its version.
+		if reply.Version != 1 || reply.ID != "recover" || reply.Revision != KernelRevision {
+			return problem("cleanup_incomplete", "未收到有效的清理确认，请稍后重试。", "")
+		}
+		if reply.HelperRelease != HelperRelease {
+			return problem("helper_upgrade_required", "请先升级连接后台，再恢复连接。", "")
+		}
+		return err
+	}
+	if reply.HelperRelease != HelperRelease {
+		return problem("helper_upgrade_required", "请先升级连接后台，再恢复连接。", "")
+	}
+	if !reply.Clean {
+		return problem("cleanup_pending", "旧连接仍在清理，请稍后重试。", "")
+	}
+	e.warning = nil
+	return nil
+}
+func (e *PrivilegedEngine) Rebind() error {
+	if e.helperRelease != HelperRelease {
+		return problem("helper_upgrade_required", "网络恢复功能需要升级连接后台。", "")
+	}
+	_, err := e.exchange("rebind", "")
+	return err
 }
 func (e *PrivilegedEngine) Stop() { _ = e.StopChecked() }
 func (e *PrivilegedEngine) StopChecked() error {
@@ -235,7 +287,7 @@ func decodeHelperRequest(data []byte) (helperRequest, error) {
 	if dec.Decode(&extra) != io.EOF || r.Version != 1 || len(r.ID) > 80 || len(r.Config) > 2<<20 {
 		return r, errors.New("invalid request")
 	}
-	if r.Method != "connect" && r.Method != "disconnect" && r.Method != "status" && r.Method != "health" {
+	if r.Method != "connect" && r.Method != "disconnect" && r.Method != "status" && r.Method != "health" && r.Method != "rebind" && r.Method != "confirm_cleanup" {
 		return r, errors.New("unsupported operation")
 	}
 	if r.Method != "connect" && r.Config != "" {
@@ -303,6 +355,10 @@ type HelperServer struct {
 	TemporaryRoot string
 	NewEngine     func() Engine
 	controller    sync.Mutex
+	transition    sync.Mutex
+	nextSession   atomic.Uint64
+	cleanupFence  uint64
+	beforeConnect func()
 	sessions      sync.WaitGroup
 	connections   sync.Map
 }
@@ -322,16 +378,17 @@ func (s *HelperServer) Serve(listener *net.UnixListener) error {
 			conn.Close()
 			continue
 		}
+		session := s.nextSession.Add(1)
 		s.sessions.Add(1)
 		s.connections.Store(conn, true)
 		go func() {
 			defer s.sessions.Done()
 			defer func() { <-slots; s.connections.Delete(conn) }()
-			s.handle(conn)
+			s.handle(conn, session)
 		}()
 	}
 }
-func (s *HelperServer) handle(conn *net.UnixConn) {
+func (s *HelperServer) handle(conn *net.UnixConn, session uint64) {
 	defer conn.Close()
 	defer func() {
 		if recover() != nil {
@@ -344,10 +401,13 @@ func (s *HelperServer) handle(conn *net.UnixConn) {
 	}
 	reader := bufio.NewReader(conn)
 	var engine Engine
+	ownsController := false
 	defer func() {
-		if engine != nil {
+		if ownsController {
 			defer s.controller.Unlock()
-			engine.Stop()
+			if engine != nil {
+				engine.Stop()
+			}
 		}
 	}()
 	for {
@@ -357,7 +417,7 @@ func (s *HelperServer) handle(conn *net.UnixConn) {
 			return
 		}
 		r, err := decodeHelperRequest(data)
-		reply := helperReply{Version: 1, ID: r.ID, Revision: KernelRevision, Peers: []Peer{}}
+		reply := helperReply{Version: 1, ID: r.ID, Revision: KernelRevision, Peers: []Peer{}, HelperRelease: HelperRelease}
 		if err != nil {
 			reply.Error = &Problem{Code: "invalid_request", Message: "授权后台拒绝了无效请求。"}
 		} else {
@@ -366,15 +426,47 @@ func (s *HelperServer) handle(conn *net.UnixConn) {
 				if engine != nil {
 					reply.Error = &Problem{Code: "invalid_request", Message: "连接会话不支持健康探测。"}
 				}
+			case "confirm_cleanup":
+				s.transition.Lock()
+				if ownsController || !s.controller.TryLock() {
+					reply.Error = &Problem{Code: "cleanup_pending", Message: "已有连接仍在运行或清理。"}
+				} else {
+					// Any accepted but not-yet-started connect from before
+					// this proof must never be allowed to start afterwards.
+					s.cleanupFence = s.nextSession.Load()
+					reply.Clean = true
+					s.controller.Unlock()
+				}
+				s.transition.Unlock()
+			case "rebind":
+				if worker, ok := engine.(interface{ Rebind() error }); ok {
+					if err := worker.Rebind(); err != nil {
+						reply.Error = &Problem{Code: "rebind_failed", Message: "网络刷新请求未完成。"}
+					}
+				} else {
+					reply.Error = &Problem{Code: "not_connected", Message: "当前没有可刷新的连接。"}
+				}
 			case "connect":
 				if engine != nil {
 					reply.Error = &Problem{Code: "already_connected", Message: "该会话已建立连接。"}
 					break
 				}
+				if s.beforeConnect != nil {
+					s.beforeConnect()
+				}
+				s.transition.Lock()
+				if session <= s.cleanupFence {
+					s.transition.Unlock()
+					reply.Error = &Problem{Code: "cleanup_pending", Message: "旧连接请求已失效，请重新连接。"}
+					break
+				}
 				if !s.controller.TryLock() {
+					s.transition.Unlock()
 					reply.Error = &Problem{Code: "already_connected", Message: "已有应用会话管理隧道，请先断开。"}
 					break
 				}
+				ownsController = true
+				s.transition.Unlock()
 				engine = s.NewEngine()
 				candidate, e := validateInline([]byte(r.Config), s.TemporaryRoot)
 				if e == nil {
@@ -399,6 +491,7 @@ func (s *HelperServer) handle(conn *net.UnixConn) {
 				if engine != nil {
 					engine.Stop()
 					engine = nil
+					ownsController = false
 					s.controller.Unlock()
 				}
 			}
@@ -407,7 +500,7 @@ func (s *HelperServer) handle(conn *net.UnixConn) {
 		if json.NewEncoder(conn).Encode(reply) != nil {
 			return
 		}
-		if r.Method == "health" || r.Method == "disconnect" || reply.Error != nil {
+		if r.Method == "health" || r.Method == "confirm_cleanup" || r.Method == "disconnect" || reply.Error != nil {
 			return
 		}
 	}

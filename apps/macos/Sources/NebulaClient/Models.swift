@@ -40,6 +40,10 @@ public struct ConnectionStatus: Codable, Sendable {
     public let profileID: String?
     public let error: BackendProblem?
     public let peers: [KnownPeer]
+    public init(state: String, profileID: String?, error: BackendProblem?, peers: [KnownPeer], startedAt: String? = nil, observedAt: String? = nil) {
+        self.state = state; self.profileID = profileID; self.error = error; self.peers = peers
+        self.startedAt = startedAt; self.observedAt = observedAt
+    }
     public static let disconnected = ConnectionStatus(state: "disconnected", profileID: nil, error: nil, peers: [])
     public var isStarted: Bool { state == "started" }
 }
@@ -52,10 +56,11 @@ public struct BackendRequest: Encodable, Sendable {
     public var name: String?
     public var digest: String?
     public var files: [String: String]?
-    public init(method: String, path: String? = nil, profileID: String? = nil, name: String? = nil, digest: String? = nil, files: [String: String]? = nil) {
+    public var address: String?
+    public init(method: String, path: String? = nil, profileID: String? = nil, name: String? = nil, digest: String? = nil, files: [String: String]? = nil, address: String? = nil) {
         self.id = UUID().uuidString
         self.method = method; self.path = path; self.profileID = profileID
-        self.name = name; self.digest = digest; self.files = files
+        self.name = name; self.digest = digest; self.files = files; self.address = address
     }
 }
 private struct Envelope<T: Decodable>: Decodable {
@@ -87,9 +92,13 @@ public struct ConnectionEvent: Decodable, Sendable, Identifiable {
     public var id: String { time + code }
     public var title: String {
         switch code {
+        case "cleanup_confirmed": return "旧连接清理已确认"
+        case "network_refresh_requested": return "已请求刷新网络连接"
+        case "node_probe_finished": return "节点连通测试完成"
         case "tunnel_started": return "隧道已启动"
         case "tunnel_stopped": return "已断开连接"
         case "profile_imported": return "配置已保存"
+        case "profile_renamed": return "网络显示名称已更新"
         case "backend_stopped": return "连接后台已停止"
         case "cleanup_incomplete": return "隧道清理未确认"
         case "authorization_required": return "需要管理员授权"
@@ -97,4 +106,13 @@ public struct ConnectionEvent: Decodable, Sendable, Identifiable {
         default: return "操作未完成"
         }
     }
+}
+
+public struct NodeProbeResult: Decodable, Sendable {
+    public let address: String
+    public let sent: Int
+    public let received: Int
+    public let averageMS: Double?
+    public let observedAt: String
+    public var lossPercent: Int? { sent > 0 ? Int((Double(sent - received) / Double(sent) * 100).rounded()) : nil }
 }

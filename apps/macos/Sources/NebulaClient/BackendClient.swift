@@ -20,17 +20,28 @@ public final class BackendClient: @unchecked Sendable {
     private var output: FileHandle?
     private var readBuffer = Data()
     private var cleanupWarning: BackendProblem?
+    private var permanentlyClosed = false
     public init(executable: URL, store: URL) { self.executable = executable; self.store = store; self.requestTimeout = 20 }
     init(executable: URL, store: URL, requestTimeout: TimeInterval) {
         self.executable = executable; self.store = store; self.requestTimeout = requestTimeout
     }
 
     public func send<T: Decodable & Sendable>(_ request: BackendRequest, as type: T.Type) async throws -> T {
+        try await exchange(request, as: type, recovering: false)
+    }
+    public func recover() async throws -> ConnectionStatus {
+        try await exchange(BackendRequest(method: "recover"), as: ConnectionStatus.self, recovering: true)
+    }
+    private func exchange<T: Decodable & Sendable>(_ request: BackendRequest, as type: T.Type, recovering: Bool) async throws -> T {
         try await withCheckedThrowingContinuation { continuation in
             queue.async {
                 let interruption = InterruptionState()
                 do {
-                    if let warning = self.cleanupWarning { throw warning }
+                    guard !self.permanentlyClosed else { throw BackendProblem(code: "backend_closed", message: "应用正在退出，已停止接受后台请求。") }
+                    if recovering {
+                        do { try self.stopChild() }
+                        catch { if self.process != nil { throw error } }
+                    } else if let warning = self.cleanupWarning { throw warning }
                     try self.startIfNeeded()
                     guard let process = self.process, let input = self.input else {
                         throw BackendProblem(code: "backend_unavailable", message: "连接后台不可用。")
@@ -43,6 +54,13 @@ public final class BackendClient: @unchecked Sendable {
                     var body = try JSONEncoder().encode(request); body.append(0x0a)
                     try input.write(contentsOf: body)
                     let line = try self.readLine()
+                    if recovering {
+                        let state = try Wire.decode(ConnectionStatus.self, from: line, requestID: request.id)
+                        guard state.state == "disconnected", state.profileID == nil, state.error == nil else {
+                            throw BackendProblem(code: "cleanup_incomplete", message: "后台未确认旧连接已清理。")
+                        }
+                        self.cleanupWarning = nil
+                    }
                     continuation.resume(returning: try Wire.decode(type, from: line, requestID: request.id))
                 } catch {
                     if interruption.wasForced {
@@ -118,10 +136,32 @@ public final class BackendClient: @unchecked Sendable {
             throw warning
         }
     }
-    public func shutdown() async throws {
+    /// Called only after our fixed-purpose administrator removal transaction
+    /// completed successfully. Never infer removal from a transport failure.
+    public func completeAuthorizedRemoval() async throws {
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             queue.async {
-                do { try self.stopChild(); continuation.resume() }
+                do {
+                    guard !self.permanentlyClosed else { throw BackendProblem(code: "backend_closed", message: "应用正在退出。") }
+                    let paths = [AuthorizationPlan.helperPath, AuthorizationPlan.plistPath, "/private/var/run/nebula-gui/helper.sock"]
+                    guard paths.allSatisfy({ !FileManager.default.fileExists(atPath: $0) }) else {
+                        throw BackendProblem(code: "cleanup_pending", message: "组件仍在退出，请刷新后检查。")
+                    }
+                    do { try self.stopChild() } catch { if self.process != nil { throw error } }
+                    self.cleanupWarning = nil
+                    continuation.resume()
+                } catch { continuation.resume(throwing: error) }
+            }
+        }
+    }
+    public func shutdown(permanently: Bool = false) async throws {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            queue.async {
+                do {
+                    try self.stopChild()
+                    if permanently { self.permanentlyClosed = true }
+                    continuation.resume()
+                }
                 catch { continuation.resume(throwing: error) }
             }
         }

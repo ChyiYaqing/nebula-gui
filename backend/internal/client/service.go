@@ -1,9 +1,11 @@
 package client
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -15,6 +17,8 @@ type Service struct {
 	failure   *Problem
 	events    []Event
 	startedAt *time.Time
+	lastProbe time.Time
+	probe     func(context.Context, string) (ProbeResult, error)
 }
 
 func NewService(s *Store, e Engine) *Service { return &Service{store: s, engine: e, events: []Event{}} }
@@ -87,8 +91,22 @@ func (s *Service) invoke(r Request) (any, error) {
 		return append([]Event{}, s.events...), nil
 	case "list":
 		return s.store.List()
+	case "rename":
+		profile, err := s.store.Rename(r.ProfileID, r.Name)
+		if err == nil {
+			s.event("profile_renamed")
+		}
+		return profile, err
 	case "preview", "import":
-		c, err := Inspect(r.Path, r.Name, r.Files, time.Now())
+		name := r.Name
+		if r.Method == "import" && r.ProfileID != "" && strings.TrimSpace(name) == "" {
+			current, _, err := s.store.Load(r.ProfileID)
+			if err != nil {
+				return nil, err
+			}
+			name = current.Name
+		}
+		c, err := Inspect(r.Path, name, r.Files, time.Now())
 		if err != nil {
 			return nil, err
 		}
@@ -171,6 +189,60 @@ func (s *Service) invoke(r Request) (any, error) {
 		s.failure = nil
 		s.event("tunnel_stopped")
 		return s.status(), nil
+	case "probe":
+		state := s.status()
+		if state.State != "started" {
+			return nil, problem("not_connected", "请先连接网络，再测试节点。", "")
+		}
+		profile, _, err := s.store.Load(s.active)
+		if err != nil {
+			return nil, err
+		}
+		address, err := validateProbeTarget(r.Address, profile.Networks)
+		if err != nil {
+			return nil, err
+		}
+		if time.Since(s.lastProbe) < 3*time.Second {
+			return nil, problem("probe_rate_limited", "请稍候再测试节点。", "")
+		}
+		s.lastProbe = time.Now()
+		ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+		defer cancel()
+		probe := s.probe
+		if probe == nil {
+			probe = probeNode
+		}
+		result, err := probe(ctx, address.String())
+		if err == nil {
+			s.event("node_probe_finished")
+		}
+		return result, err
+	case "recover":
+		worker, ok := s.engine.(interface{ RecoverChecked() error })
+		if !ok {
+			return nil, problem("unsupported", "此后台不支持恢复确认。", "")
+		}
+		if err := worker.RecoverChecked(); err != nil {
+			return nil, err
+		}
+		s.active = ""
+		s.startedAt = nil
+		s.failure = nil
+		s.event("cleanup_confirmed")
+		return s.status(), nil
+	case "rebind":
+		if s.status().State != "started" {
+			return nil, problem("not_connected", "请先连接网络。", "")
+		}
+		worker, ok := s.engine.(interface{ Rebind() error })
+		if !ok {
+			return nil, problem("unsupported", "此后台不支持网络刷新。", "")
+		}
+		if err := worker.Rebind(); err != nil {
+			return nil, err
+		}
+		s.event("network_refresh_requested")
+		return s.status(), nil
 	case "status":
 		return s.status(), nil
 	case "diagnostics":
@@ -194,12 +266,12 @@ func DecodeRequest(b []byte) (Request, error) {
 	}
 	for k := range fields {
 		switch k {
-		case "version", "id", "method", "path", "profileID", "name", "digest", "files":
+		case "version", "id", "method", "path", "profileID", "name", "digest", "files", "address":
 		default:
 			return r, problem("invalid_request", "请求包含未知字段。", "")
 		}
 	}
-	if json.Unmarshal(b, &r) != nil || len(r.ID) > 80 || len(r.Path) > 4096 || len(r.Name) > 160 || len(r.Files) > 3 {
+	if json.Unmarshal(b, &r) != nil || len(r.ID) > 80 || len(r.Path) > 4096 || len(r.Name) > 160 || len(r.Files) > 3 || len(r.Address) > 64 {
 		return r, problem("invalid_request", "请求字段无效或过长。", "")
 	}
 	for k, v := range r.Files {

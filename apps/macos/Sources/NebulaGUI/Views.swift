@@ -3,7 +3,7 @@ import SwiftUI
 import NebulaClient
 import UniformTypeIdentifiers
 
-private enum Palette {
+enum Palette {
     static let accent = Color(red: 0.08, green: 0.48, blue: 0.38)
     static let canvas = Color(nsColor: .windowBackgroundColor)
     static let surface = Color(nsColor: .controlBackgroundColor)
@@ -16,6 +16,24 @@ struct PressStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label.scaleEffect(configuration.isPressed && !reduceMotion ? 0.97 : 1)
             .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: configuration.isPressed)
+    }
+}
+/// Connection and interruption use distinct emphasis and symbols in every entry point.
+private struct NetworkActionButton: View {
+    let title: String
+    let symbol: String
+    let disconnecting: Bool
+    let action: () -> Void
+    var body: some View {
+        if disconnecting {
+            Button(role: .destructive, action: action) {
+                Label(title, systemImage: "stop.circle").foregroundStyle(.red).frame(minWidth: 140, minHeight: 40)
+            }.buttonStyle(.bordered).tint(.red)
+        } else {
+            Button(action: action) {
+                Label(title, systemImage: symbol).frame(minWidth: 140, minHeight: 40)
+            }.buttonStyle(.borderedProminent).tint(Palette.accent)
+        }
     }
 }
 struct MainView: View {
@@ -34,7 +52,7 @@ struct MainView: View {
                         ForEach(model.profiles) { profile in
                             Button { model.selectedID = profile.id } label: {
                                 HStack(alignment: .top, spacing: 9) {
-                                    Circle().fill(model.status.profileID == profile.id ? Palette.accent : Color.secondary.opacity(0.35)).frame(width: 7, height: 7).padding(.top, 5)
+                                    Circle().fill(model.status.profileID == profile.id ? (model.status.isStarted ? Palette.accent : Color.orange) : Color.secondary.opacity(0.35)).frame(width: 7, height: 7).padding(.top, 5)
                                     VStack(alignment: .leading, spacing: 4) {
                                         Text(profile.name).font(.system(size: 13, weight: .medium)).lineLimit(2)
                                         Text(profile.networks.first ?? "").font(.system(size: 10, design: .monospaced)).foregroundStyle(.secondary).lineLimit(1)
@@ -48,13 +66,17 @@ struct MainView: View {
                 }
                 Button { model.chooseImport() } label: { Label("导入网络", systemImage: "plus").frame(maxWidth: .infinity, minHeight: 40) }
                     .buttonStyle(.bordered).disabled(model.busy).keyboardShortcut("o", modifiers: [.command])
-                Text("本机验证版 · v0.2").font(.caption2).foregroundStyle(.secondary)
+                Text("本机验证版 · v0.3.1").font(.caption2).foregroundStyle(.secondary)
             }.padding(20).frame(width: 210).background(Palette.canvas)
             Divider()
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
                     HStack {
                         Text(model.selected?.name ?? "连接你的网络").font(.system(size: 24, weight: .semibold)).tracking(-0.4)
+                        if model.selected != nil {
+                            Button { model.chooseRename() } label: { Image(systemName: "pencil").frame(width: 40, height: 40) }
+                                .buttonStyle(.borderless).disabled(model.busy).help("重命名网络").accessibilityLabel("重命名网络")
+                        }
                         Spacer()
                         Label(model.statusText, systemImage: model.status.isStarted ? "circle.fill" : "circle")
                             .font(.caption).foregroundStyle(model.status.isStarted ? Palette.accent : .secondary)
@@ -95,6 +117,7 @@ struct MainView: View {
             return true
         }
         .sheet(isPresented: $model.importing) { ImportView(model: model) }
+        .sheet(item: $model.renameTarget) { profile in RenameNetworkView(model: model, profile: profile) }
         .sheet(isPresented: $model.showAuthorizationReview) { AuthorizationReviewView(model: model) }
         .tint(Palette.accent)
         .onAppear {
@@ -107,13 +130,14 @@ struct MainView: View {
             Image(systemName: model.authorization.available ? "checkmark.shield" : "lock.shield")
                 .foregroundStyle(model.authorization.available ? Palette.accent : .orange)
             VStack(alignment: .leading, spacing: 5) {
-                Text(model.authorization.available ? "连接后台已启用" : "首次连接需要管理员授权").font(.callout.weight(.medium))
-                Text(model.authorization.available ? "GUI 以普通用户运行，网络组件负责隧道。" : "点击启用，查看安装内容，再通过 macOS 系统窗口授权。")
+                Text(model.authorization.updateRequired == true ? "连接后台可升级" : model.authorization.available ? "连接后台已启用" : "首次连接需要管理员授权").font(.callout.weight(.medium))
+                Text(model.authorization.updateRequired == true ? "升级后可使用异常恢复和唤醒刷新，已保存配置保留。" : model.authorization.available ? "GUI 以普通用户运行，网络组件负责隧道。" : "点击启用，查看安装内容，再通过 macOS 系统窗口授权。")
                     .font(.caption).foregroundStyle(.secondary)
             }
             Spacer(minLength: 8)
-            Button(model.authorization.available ? "管理后台" : "启用连接后台") {
-                model.removingAuthorization = model.authorization.available
+            Button(model.authorization.updateRequired == true ? "升级后台" : model.authorization.available ? "管理后台" : "启用连接后台") {
+                model.upgradingAuthorization = model.authorization.updateRequired == true
+                model.removingAuthorization = model.authorization.available && !model.upgradingAuthorization
                 model.showAuthorizationReview = true
             }.disabled(model.busy || model.status.isStarted)
         }.padding(14).background(Palette.canvas, in: RoundedRectangle(cornerRadius: Palette.medium))
@@ -156,16 +180,28 @@ struct MainView: View {
             }
             HStack {
                 if model.busy { ProgressView().controlSize(.small) }
-                Button { Task { await model.connectSelected() } } label: {
-                    Label(!model.authorization.available ? "启用连接后台" : model.isCurrentStarted ? "断开连接" : model.status.isStarted ? "切换并连接" : "连接网络", systemImage: model.authorization.available ? "power" : "lock.open")
-                        .frame(minWidth: 140, minHeight: 40)
-                }.buttonStyle(.borderedProminent).disabled(model.busy)
+                NetworkActionButton(
+                    title: !model.authorization.available ? "启用连接后台" : model.isCurrentStarted ? "断开连接" : model.status.isStarted ? "切换并连接" : "连接网络",
+                    symbol: !model.authorization.available ? "lock.open" : model.status.isStarted ? "arrow.triangle.swap" : "power",
+                    disconnecting: model.isCurrentStarted
+                ) { Task { await model.connectSelected() } }.disabled(model.busy)
                 Spacer()
                 if let days = profile.daysRemaining {
                     Label(days < 0 ? "证书已过期" : days == 0 ? "证书不足 1 天到期" : "证书剩余 \(days) 天", systemImage: "checkmark.shield")
                         .font(.caption).foregroundStyle(days < 7 ? Color.orange : .secondary)
                 }
             }
+            if model.canCancelConnection {
+                HStack {
+                    Text(model.recoveryText).font(.caption).foregroundStyle(.secondary)
+                    Spacer()
+                    Button(role: .destructive) { Task { await model.disconnect() } } label: {
+                        Label(model.connectionBusy ? "取消并断开" : "停止自动恢复", systemImage: "stop.circle").foregroundStyle(.red)
+                    }.buttonStyle(.bordered).tint(.red)
+                }
+            }
+            Toggle("本次连接中断后自动恢复", isOn: $model.automaticRecovery)
+                .toggleStyle(.checkbox).font(.caption).disabled(model.busy)
             Text(model.isCurrentStarted ? "隧道已启动。具体节点是否可达，需要实际访问确认。" : "连接后仅处理 Nebula 网络流量。")
                 .font(.caption).foregroundStyle(.secondary).frame(minHeight: 28, alignment: .topLeading)
         }.padding(24).background(Palette.canvas, in: RoundedRectangle(cornerRadius: Palette.large))
@@ -188,15 +224,33 @@ struct MainView: View {
                         .padding(.vertical, 3)
                 }
             }
-            Text("本机已知节点").font(.subheadline.weight(.medium))
+            Divider()
+            Toggle("证书到期通知", isOn: Binding(get: { model.notificationsEnabled }, set: { enabled in Task { await model.setNotifications(enabled) } }))
+                .toggleStyle(.checkbox).disabled(model.notificationsBusy)
+            Text(model.notificationText).foregroundStyle(.secondary)
+            Divider()
             if model.status.profileID != profile.id {
                 Text("此网络当前未连接。").font(.caption).foregroundStyle(.secondary)
-            } else if model.status.peers.isEmpty {
-                Text("当前没有隧道记录。这不代表其他设备离线。")
-                    .font(.caption).foregroundStyle(.secondary)
             } else {
-                ForEach(model.status.peers) { peer in
-                    HStack { Text(peer.name.isEmpty ? "未知名称" : peer.name); Spacer(); Text(peer.addresses.joined(separator: ", ")).monospaced(); Text(peer.pending ? "待握手" : "活动隧道").foregroundStyle(.secondary) }.font(.caption)
+                PeerListView(peers: model.status.peers, canProbe: model.isCurrentStarted && !model.busy, probeBusy: model.probeBusy,
+                    copy: { model.copyNodeAddress($0) }, probe: { address in model.probeAddress = address; Task { await model.testNode() } })
+                    .id(profile.id)
+            }
+            if model.isCurrentStarted {
+                Divider()
+                Text("节点连通测试").font(.subheadline.weight(.medium))
+                HStack {
+                    TextField("Nebula 节点 IP 地址", text: $model.probeAddress).textFieldStyle(.roundedBorder)
+                        .onSubmit { Task { await model.testNode() } }
+                    if model.probeBusy { ProgressView().controlSize(.small) }
+                    Button("测试节点") { Task { await model.testNode() } }
+                        .disabled(model.probeBusy || model.busy || model.probeAddress.isEmpty)
+                }
+                if let result = model.probeResult {
+                    Text("\(result.address)：\(result.received)／\(result.sent) 回复，丢包 \(result.lossPercent.map { "\($0)%" } ?? "未测得")")
+                    if let milliseconds = result.averageMS { Text(String(format: "平均往返 %.1f ms", milliseconds)) }
+                    if result.received == 0 { Text("未收到 ICMP 回复。节点可能禁止探测，请结合实际访问确认。").foregroundStyle(.secondary) }
+                    Text("测试于 " + eventTime(result.observedAt)).foregroundStyle(.secondary)
                 }
             }
         }.font(.caption)
@@ -238,6 +292,7 @@ struct ImportView: View {
             if model.busy { ProgressView("正在验证配置与设备身份…").padding(.vertical) }
             if let candidate = model.candidate {
                 TextField("网络名称", text: $model.importName).textFieldStyle(.roundedBorder)
+                if let message = ProfileNameRules.validationMessage(model.importName) { Text(message).font(.caption).foregroundStyle(.orange) }
                 LabeledContent("设备", value: candidate.device)
                 LabeledContent("Nebula 地址", value: candidate.networks.joined(separator: ", "))
                 LabeledContent("有效期至", value: candidate.expiration?.formatted(date: .abbreviated, time: .omitted) ?? candidate.expiresAt)
@@ -255,7 +310,7 @@ struct ImportView: View {
                 Button("取消") { model.importing = false; model.candidate = nil; model.problem = nil }.keyboardShortcut(.cancelAction)
                 Spacer()
                 Button(model.replacementID == nil ? "保存网络" : "确认更新") { Task { await model.confirmImport() } }
-                    .buttonStyle(.borderedProminent).disabled(model.busy || model.candidate == nil || model.importName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .buttonStyle(.borderedProminent).disabled(model.busy || model.candidate == nil || ProfileNameRules.validationMessage(model.importName) != nil)
                     .keyboardShortcut(.defaultAction)
             }
         }.padding(28).frame(width: 480).tint(Palette.accent).interactiveDismissDisabled(model.busy)
@@ -270,9 +325,13 @@ struct MenuContent: View {
             if let active = model.active ?? model.selected {
                 Text(active.name).font(.subheadline)
                 Text(active.networks.first ?? "").font(.system(size: 12, design: .monospaced)).foregroundStyle(.secondary)
-                Button(!model.authorization.available ? "启用连接后台" : model.isCurrentStarted ? "断开连接" : "连接所选网络") {
+                NetworkActionButton(
+                    title: !model.authorization.available ? "启用连接后台" : model.status.isStarted ? "断开连接" : "连接所选网络",
+                    symbol: model.authorization.available ? "power" : "lock.open",
+                    disconnecting: model.status.isStarted
+                ) {
                     if !model.authorization.available { openWindow(id: "main"); NSApp.activate(ignoringOtherApps: true) }
-                    Task { await model.connectSelected() }
+                    Task { if model.status.isStarted { await model.disconnect() } else { await model.connectSelected() } }
                 }.disabled(model.busy)
             }
             Divider()
@@ -288,9 +347,9 @@ struct AuthorizationReviewView: View {
     @State private var consent = false
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
-            Label(model.removingAuthorization ? "移除连接后台" : "启用连接后台", systemImage: "lock.shield")
+            Label(model.removingAuthorization ? "移除连接后台" : model.upgradingAuthorization ? "升级连接后台" : "启用连接后台", systemImage: "lock.shield")
                 .font(.title2.weight(.semibold))
-            Text(model.removingAuthorization ? "将停止并移除 Nebula GUI 的网络组件。原始配置与应用保存的网络不会删除。" : "安装仅供当前登录用户控制的 root 网络组件。GUI 保持普通用户身份，管理员密码仅在 macOS 系统窗口输入。")
+            Text(model.removingAuthorization ? "将停止并移除 Nebula GUI 的网络组件。原始配置与应用保存的网络不会删除。" : model.upgradingAuthorization ? "将重启并升级本应用的网络组件，现有受管连接会中断。失败时尝试恢复旧组件；已保存的配置保留。" : "安装仅供当前登录用户控制的 root 网络组件。GUI 保持普通用户身份，管理员密码仅在 macOS 系统窗口输入。")
                 .font(.callout).fixedSize(horizontal: false, vertical: true)
             VStack(alignment: .leading, spacing: 10) {
                 Text("将写入／移除以下文件").font(.caption.weight(.semibold))
@@ -303,15 +362,15 @@ struct AuthorizationReviewView: View {
                 Text("组件开机启动，但不会自动连接。只接受当前用户的连接、断开和查询请求；GUI 后台退出即清理隧道。旧 Nebula 服务若仍加载，安装会被拒绝。")
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
-            Toggle(model.removingAuthorization ? "我同意停止并移除此组件" : "我同意安装上述网络组件并授予系统权限", isOn: $consent)
+            Toggle(model.removingAuthorization ? "我同意停止并移除此组件" : model.upgradingAuthorization ? "我同意重启并升级上述网络组件" : "我同意安装上述网络组件并授予系统权限", isOn: $consent)
                 .toggleStyle(.checkbox)
             HStack {
                 Button("取消") { model.showAuthorizationReview = false }.keyboardShortcut(.cancelAction)
-                if !model.authorization.available && !model.removingAuthorization {
-                    Button("移除已有组件…") { model.removingAuthorization = true; consent = false }
+                if !model.removingAuthorization {
+                    Button("移除已有组件…") { model.removingAuthorization = true; model.upgradingAuthorization = false; consent = false }
                 }
                 Spacer()
-                Button(model.removingAuthorization ? "授权移除" : "授权安装") {
+                Button(model.removingAuthorization ? "授权移除" : model.upgradingAuthorization ? "授权升级" : "授权安装") {
                     Task { await model.manageAuthorization(removing: model.removingAuthorization) }
                 }.buttonStyle(.borderedProminent).disabled(!consent || model.busy)
             }

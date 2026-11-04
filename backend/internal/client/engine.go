@@ -38,6 +38,13 @@ func (e *NativeEngine) Start(data []byte) error {
 	e.control = control
 	return nil
 }
+func (e *NativeEngine) Rebind() error {
+	if !e.Alive() {
+		return problem("not_connected", "当前没有可刷新的连接。", "")
+	}
+	e.control.RebindUDPServer()
+	return nil
+}
 func (e *NativeEngine) Stop() {
 	if e.control != nil {
 		e.control.Stop()

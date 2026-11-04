@@ -20,7 +20,7 @@ cp "$ROOT/.build/bin/nebula-gui-helper" "$APP/Contents/Helpers/nebula-gui-helper
 python3 - "$APP/Contents/Info.plist" <<'PY'
 import plistlib,sys
 with open(sys.argv[1],'wb') as f:
- plistlib.dump({'CFBundleName':'Nebula','CFBundleDisplayName':'Nebula','CFBundleIdentifier':'net.nebula.gui.development','CFBundleExecutable':'NebulaGUI','CFBundlePackageType':'APPL','CFBundleShortVersionString':'0.2.0','CFBundleVersion':'2','LSMinimumSystemVersion':'13.0','NSHighResolutionCapable':True,'NSSupportsAutomaticTermination':False,'NSHumanReadableCopyright':'Nebula GUI development build'},f)
+ plistlib.dump({'CFBundleName':'Nebula','CFBundleDisplayName':'Nebula','CFBundleIdentifier':'net.nebula.gui.development','CFBundleExecutable':'NebulaGUI','CFBundlePackageType':'APPL','CFBundleShortVersionString':'0.3.1','CFBundleVersion':'4','LSMinimumSystemVersion':'13.0','NSHighResolutionCapable':True,'NSSupportsAutomaticTermination':False,'NSHumanReadableCopyright':'Nebula GUI development build'},f)
 PY
 codesign --force --sign - "$APP/Contents/Helpers/nebula-gui-backend"
 codesign --force --sign - "$APP/Contents/Helpers/nebula-gui-helper"

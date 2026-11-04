@@ -1,4 +1,4 @@
-> v0.2 已完成本机授权安装与真实节点互通验证，结果见 [验证记录](VALIDATION.md)。不要手工以 root 运行 App 或配置后台。
+> v0.3 已完成本机授权升级、真实节点互通和普通后台异常恢复验证，结果见 [验证记录](VALIDATION.md)。不要手工以 root 运行 App 或配置后台。
 
 # 本机开发
 
@@ -79,7 +79,7 @@ NEBULA_GUI_FIXTURE_DIR=/private/tmp/nebula-gui-fixture \
 
 ## 尚未交付
 
-组件原位升级、Keychain、睡眠恢复、系统到期通知、退出整个 App 后保持连接、Intel/macOS 13 实机测试、iOS/Linux 实现及正式签名分发均未完成。
+Keychain、退出整个 App 后保持连接、Intel/macOS 13 实机测试、iOS/Linux 实现及正式签名分发均未完成。v0.3 已实现组件升级、唤醒同步与有限恢复、主动开启的系统到期通知；实机授权升级与普通后台异常恢复已通过；真实睡眠及系统通知投递仍需验收。
 
 ## 保留运行中的 App 并构建下一版
 
@@ -88,3 +88,18 @@ NEBULA_GUI_APP_OUTPUT="$PWD/build/Next/Nebula.app" bash scripts/test.sh
 ```
 
 该参数只改变 App 包输出位置，不安装、升级或重启 root 组件。当前 App 使用自己包内的后台，因此独立构建不会覆盖其运行文件。切换 App 时，先断开并退出旧实例，再打开新实例；不能让两个实例同时持有同一配置目录。
+
+
+## v0.3 恢复与诊断
+
+会话恢复不持久保存连接意图。普通后台或特权会话失效后，先关闭原普通后台，再通过认证组件确认旧控制会话清理完成；确认会设置会话序号栅栏，拒绝已接收但延迟执行的旧请求。只有这一步成功，传输层才解锁清理警告。
+
+退出使用永久传输屏障，阻止导入或刷新回调在后台关闭后重新启动子进程。通知协调器对每次系统异步调用检查代次，配置替换或关闭通知可撤回迟到的添加请求。
+
+可单独验证普通用户 ICMP socket（仅回环地址，不创建隧道）：
+
+```sh
+(cd backend && NEBULA_GUI_ICMP_TEST=1 go test -race -run TestUnprivilegedICMPLoopback ./internal/client)
+```
+
+隔离 `--data-dir` 实例不发送系统通知。新版本建议构建到 `build/Completion/Nebula.app`，避免覆盖正在运行的版本。详细范围见 [macOS 补全方案](MACOS_COMPLETION.md)。

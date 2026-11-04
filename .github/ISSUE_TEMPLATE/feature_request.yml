@@ -1,0 +1,31 @@
+name: 新功能
+description: 在开始开发前记录用户问题、方案边界和验收条件。
+title: "[Feature] "
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: 用户问题
+      description: 谁在什么情况下遇到什么问题？
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: 目标与范围
+      description: 写明要实现的行为，以及本次不涉及的内容。
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: 验收条件
+      description: 列出可观察、可测试的完成条件。
+      placeholder: "- [ ] 用户执行指定操作后得到预期结果"
+    validations:
+      required: true
+  - type: textarea
+    id: constraints
+    attributes:
+      label: 约束与参考
+      description: 平台、兼容性、权限、数据安全要求及相关 Issue。

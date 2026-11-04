@@ -12,7 +12,8 @@ func main() {
 	uid := flag.Uint("uid", 0, "one authorized non-root user")
 	flag.Parse()
 	if *health {
-		if !client.NewPrivilegedEngine().Authorization().Available {
+		state := client.NewPrivilegedEngine().Authorization()
+		if !state.Available || state.UpdateRequired {
 			os.Exit(1)
 		}
 		return

@@ -20,7 +20,7 @@ enum AuthorizationRunner {
                     if process.terminationStatus == 0 { continuation.resume(); return }
                     let cancelled = String(data: errorData, encoding: .utf8)?.contains("(-128)") == true
                     continuation.resume(throwing: BackendProblem(code: cancelled ? "authorization_cancelled" : "authorization_failed",
-                        message: cancelled ? "你已取消管理员授权，尚未启用连接后台。" : "后台安装或移除失败。请确认旧 Nebula 服务已停止；已有组件需先移除，再重新安装。"))
+                        message: cancelled ? "你已取消管理员授权，尚未启用连接后台。" : "后台安装、升级或移除失败。升级会尝试恢复旧组件；请刷新状态后检查。"))
                 } catch {
                     if process.isRunning { process.terminate(); process.waitUntilExit() }
                     continuation.resume(throwing: BackendProblem(code: "authorization_failed", message: "无法打开 macOS 管理员授权窗口。"))

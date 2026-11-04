@@ -187,3 +187,195 @@ func TestHelperWorkerRefusesUnprivilegedExecution(t *testing.T) {
 		t.Fatal("root helper guard did not reject ordinary execution")
 	}
 }
+
+func (e *controlledEngine) Rebind() error { return nil }
+
+func TestRecoveryProofRespectsControllerOwnership(t *testing.T) {
+	path, created := testHelper(t, uint32(os.Geteuid()))
+	candidate, err := Inspect(fixture(t), "", nil, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner := &PrivilegedEngine{socket: path, serverUID: uint32(os.Geteuid())}
+	challenger := &PrivilegedEngine{socket: path, serverUID: uint32(os.Geteuid())}
+	state := owner.Authorization()
+	if !state.Available || state.UpdateRequired || state.HelperRelease != HelperRelease {
+		t.Fatal(state)
+	}
+	if err = owner.Start(candidate.Config); err != nil {
+		t.Fatal(err)
+	}
+	worker := <-created
+	code(t, challenger.RecoverChecked(), "cleanup_pending")
+	code(t, challenger.Start(candidate.Config), "cleanup_incomplete")
+	if !worker.Alive() {
+		t.Fatal("recovery disconnected another controller")
+	}
+	if err = owner.Rebind(); err != nil {
+		t.Fatal(err)
+	}
+	if err = owner.StopChecked(); err != nil {
+		t.Fatal(err)
+	}
+	if err = challenger.RecoverChecked(); err != nil {
+		t.Fatal(err)
+	}
+	if err = challenger.Start(candidate.Config); err != nil {
+		t.Fatal(err)
+	}
+	<-created
+	if err = challenger.StopChecked(); err != nil {
+		t.Fatal(err)
+	}
+}
+func TestLegacyComponentRemainsUsableWithoutNewOperations(t *testing.T) {
+	root, err := os.MkdirTemp("/private/tmp", "ng-legacy-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(root)
+	path := filepath.Join(root, "h.sock")
+	listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: path, Net: "unix"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	done := make(chan error, 1)
+	go func() {
+		conn, err := listener.AcceptUnix()
+		if err != nil {
+			done <- err
+			return
+		}
+		defer conn.Close()
+		reader := bufio.NewReader(conn)
+		for _, expected := range []string{"connect", "disconnect"} {
+			data, err := readHelperFrame(reader)
+			if err != nil {
+				done <- err
+				return
+			}
+			var request helperRequest
+			if err = json.Unmarshal(data, &request); err != nil || request.Method != expected {
+				done <- errors.New("new operation sent to legacy controller")
+				return
+			}
+			err = json.NewEncoder(conn).Encode(helperReply{Version: 1, ID: request.ID, Revision: KernelRevision, Started: expected == "connect", Peers: []Peer{}})
+			if err != nil {
+				done <- err
+				return
+			}
+		}
+		done <- nil
+	}()
+	engine := &PrivilegedEngine{socket: path, serverUID: uint32(os.Geteuid())}
+	if err = engine.Start([]byte("legacy fixture")); err != nil {
+		t.Fatal(err)
+	}
+	code(t, engine.Rebind(), "helper_upgrade_required")
+	if err = engine.StopChecked(); err != nil {
+		t.Fatal(err)
+	}
+	if err = <-done; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCleanupProofFencesAcceptedButDelayedConnect(t *testing.T) {
+	root, err := os.MkdirTemp("/private/tmp", "ng-fence-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(root)
+	path := filepath.Join(root, "h.sock")
+	listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: path, Net: "unix"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reached, release := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	starts := make(chan struct{}, 4)
+	server := &HelperServer{AllowedUID: uint32(os.Geteuid()), TemporaryRoot: root,
+		NewEngine:     func() Engine { starts <- struct{}{}; return &controlledEngine{stopped: make(chan struct{})} },
+		beforeConnect: func() { once.Do(func() { close(reached); <-release }) },
+	}
+	done := make(chan struct{})
+	go func() { _ = server.Serve(listener); close(done) }()
+	defer func() { listener.Close(); <-done }()
+	candidate, err := Inspect(fixture(t), "", nil, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := &PrivilegedEngine{socket: path, serverUID: uint32(os.Geteuid())}
+	result := make(chan error, 1)
+	go func() { result <- old.Start(candidate.Config) }()
+	<-reached
+	recovery := &PrivilegedEngine{socket: path, serverUID: uint32(os.Geteuid())}
+	if err = recovery.RecoverChecked(); err != nil {
+		close(release)
+		t.Fatal(err)
+	}
+	close(release)
+	code(t, <-result, "cleanup_pending")
+	select {
+	case <-starts:
+		t.Fatal("old request started after cleanup proof")
+	default:
+	}
+	if err = recovery.Start(candidate.Config); err != nil {
+		t.Fatal(err)
+	}
+	<-starts
+	if err = recovery.StopChecked(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRecoveryTransportFailureIsNotMisreportedAsUpgrade(t *testing.T) {
+	for _, mode := range []string{"eof", "malformed", "legacy", "pending"} {
+		t.Run(mode, func(t *testing.T) {
+			root, err := os.MkdirTemp("/private/tmp", "ng-proof-")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer os.RemoveAll(root)
+			path := filepath.Join(root, "h.sock")
+			listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: path, Net: "unix"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer listener.Close()
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				conn, err := listener.AcceptUnix()
+				if err != nil {
+					return
+				}
+				defer conn.Close()
+				_, _ = readHelperFrame(bufio.NewReader(conn))
+				switch mode {
+				case "eof":
+					return
+				case "malformed":
+					_, _ = conn.Write([]byte("invalid\n"))
+				case "legacy":
+					_ = json.NewEncoder(conn).Encode(helperReply{Version: 1, ID: "recover", Revision: KernelRevision, Error: &Problem{Code: "invalid_request"}})
+				case "pending":
+					_ = json.NewEncoder(conn).Encode(helperReply{Version: 1, ID: "recover", Revision: KernelRevision, HelperRelease: HelperRelease, Error: &Problem{Code: "cleanup_pending"}})
+				}
+			}()
+			engine := &PrivilegedEngine{socket: path, serverUID: uint32(os.Geteuid())}
+			want := "cleanup_incomplete"
+			if mode == "legacy" {
+				want = "helper_upgrade_required"
+			}
+			if mode == "pending" {
+				want = "cleanup_pending"
+			}
+			code(t, engine.RecoverChecked(), want)
+			code(t, engine.Start([]byte("must remain blocked")), "cleanup_incomplete")
+			<-done
+		})
+	}
+}

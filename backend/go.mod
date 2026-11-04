@@ -5,6 +5,7 @@ go 1.27.3
 require (
 	github.com/slackhq/nebula v0.0.0
 	go.yaml.in/yaml/v3 v3.0.5
+	golang.org/x/net v0.61.0
 	golang.org/x/sys v0.49.0
 )
 
@@ -32,7 +33,6 @@ require (
 	github.com/stefanberger/go-pkcs11uri v0.0.0-20230803200340-78284954bff6 // indirect
 	github.com/vishvananda/netns v0.0.5 // indirect
 	golang.org/x/crypto v0.58.0 // indirect
-	golang.org/x/net v0.61.0 // indirect
 	golang.org/x/term v0.47.0 // indirect
 	golang.zx2c4.com/wintun v0.0.0-20230126152724-0fa3db229ce2 // indirect
 	golang.zx2c4.com/wireguard v0.0.0-20230325221338-052af4a8072b // indirect

@@ -9,7 +9,10 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"golang.org/x/sys/unix"
 )
@@ -17,8 +20,9 @@ import (
 var safeID = regexp.MustCompile(`^[a-f0-9]{32}$`)
 
 type pointer struct {
-	Version  string `json:"version"`
-	Previous string `json:"previous,omitempty"`
+	Version     string `json:"version"`
+	Previous    string `json:"previous,omitempty"`
+	DisplayName string `json:"displayName,omitempty"`
 }
 type Store struct {
 	root string
@@ -129,6 +133,13 @@ func (s *Store) Load(id string) (Profile, []byte, error) {
 	if json.Unmarshal(b, &profile) != nil || profile.ID != id || profile.Version != p.Version {
 		return Profile{}, nil, problem("corrupt_store", "配置摘要损坏。", "profileID")
 	}
+	if p.DisplayName != "" {
+		name, err := normalizedProfileName(p.DisplayName)
+		if err != nil {
+			return Profile{}, nil, problem("corrupt_store", "网络显示名称损坏。", "name")
+		}
+		profile.Name = name
+	}
 	config, e := readPrivateInput(filepath.Join(dir, "config.yaml"))
 	if e != nil {
 		return Profile{}, nil, problem("corrupt_store", "受管配置不可用。", "profileID")
@@ -183,6 +194,11 @@ func atomicJSON(path string, v any) error {
 }
 func (s *Store) Save(c *Candidate, replace string) (Profile, error) {
 	p := c.Profile
+	name, err := normalizedProfileName(p.Name)
+	if err != nil {
+		return Profile{}, err
+	}
+	p.Name = name
 	var previous string
 	if replace != "" {
 		old, _, err := s.Load(replace)
@@ -221,7 +237,7 @@ func (s *Store) Save(c *Candidate, replace string) (Profile, error) {
 	if err := atomicJSON(filepath.Join(dir, "profile.json"), p); err != nil {
 		return Profile{}, err
 	}
-	if err := atomicJSON(filepath.Join(s.root, "profiles", p.ID+".json"), pointer{p.Version, previous}); err != nil {
+	if err := atomicJSON(filepath.Join(s.root, "profiles", p.ID+".json"), pointer{Version: p.Version, Previous: previous, DisplayName: p.Name}); err != nil {
 		return Profile{}, err
 	}
 	committed = true
@@ -253,7 +269,7 @@ func (s *Store) Rollback(id string) (Profile, error) {
 	if _, e = Inspect(filepath.Join(dir, "config.yaml"), "", nil, time.Now()); e != nil {
 		return Profile{}, e
 	}
-	if e = atomicJSON(filepath.Join(s.root, "profiles", id+".json"), pointer{p.Previous, p.Version}); e != nil {
+	if e = atomicJSON(filepath.Join(s.root, "profiles", id+".json"), pointer{Version: p.Previous, Previous: p.Version, DisplayName: p.DisplayName}); e != nil {
 		return Profile{}, e
 	}
 	profile, _, e := s.Load(id)
@@ -268,4 +284,38 @@ func (s *Store) Remove(id string) error {
 		return e
 	}
 	return os.RemoveAll(filepath.Join(s.root, "profiles", id))
+}
+
+func normalizedProfileName(raw string) (string, error) {
+	name := strings.TrimSpace(raw)
+	if !utf8.ValidString(name) || name == "" || len(name) > 160 || strings.IndexFunc(name, unicode.IsControl) >= 0 {
+		return "", problem("invalid_name", "请输入简短的网络名称，不要包含换行或控制字符。", "name")
+	}
+	return name, nil
+}
+
+// A display name belongs to the profile, not its credential/config version.
+// Changing it never rewrites credentials or consumes the rollback slot.
+func (s *Store) Rename(id, rawName string) (Profile, error) {
+	name, err := normalizedProfileName(rawName)
+	if err != nil {
+		return Profile{}, err
+	}
+	profile, _, err := s.Load(id)
+	if err != nil {
+		return Profile{}, err
+	}
+	if profile.Name == name {
+		return profile, nil
+	}
+	index, err := s.index(id)
+	if err != nil {
+		return Profile{}, err
+	}
+	index.DisplayName = name
+	if err = atomicJSON(filepath.Join(s.root, "profiles", id+".json"), index); err != nil {
+		return Profile{}, err
+	}
+	profile.Name = name
+	return profile, nil
 }

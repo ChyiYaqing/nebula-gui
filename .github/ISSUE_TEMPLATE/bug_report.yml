@@ -1,0 +1,28 @@
+name: 问题反馈
+description: 提供可复现的问题和预期结果。
+title: "[Bug] "
+body:
+  - type: textarea
+    id: environment
+    attributes:
+      label: 环境
+      description: App 和网络组件版本、macOS 版本及机器架构。
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: 复现步骤
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: 预期与实际结果
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: 脱敏诊断与补充说明
+      description: 可附 App 导出的脱敏诊断。不要上传配置原文、私钥、证书正文、令牌或真实身份截图。
