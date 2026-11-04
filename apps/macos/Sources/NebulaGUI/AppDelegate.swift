@@ -1,0 +1,27 @@
+import AppKit
+
+@MainActor final class AppDelegate: NSObject, NSApplicationDelegate {
+    var model: AppModel?
+    private var cleaningUp = false
+
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard let model else { return .terminateNow }
+        guard !cleaningUp else { return .terminateLater }
+        cleaningUp = true
+        Task { @MainActor in
+            let stopped = await model.shutdown()
+            cleaningUp = false
+            sender.reply(toApplicationShouldTerminate: stopped)
+        }
+        return .terminateLater
+    }
+}
+
+extension AppModel {
+    func quit() async {
+        // End the calling Swift Task before entering AppKit's termination loop.
+        // That loop must be able to run the MainActor task which cleans up.
+        RunLoop.main.perform { NSApp.terminate(nil) }
+    }
+}
