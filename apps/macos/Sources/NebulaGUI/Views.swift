@@ -66,7 +66,7 @@ struct MainView: View {
                 }
                 Button { model.chooseImport() } label: { Label("导入网络", systemImage: "plus").frame(maxWidth: .infinity, minHeight: 40) }
                     .buttonStyle(.bordered).disabled(model.busy).keyboardShortcut("o", modifiers: [.command])
-                Text("本机验证版 · v0.3.1").font(.caption2).foregroundStyle(.secondary)
+                Text("本机验证版 · \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "开发中")").font(.caption2).foregroundStyle(.secondary)
             }.padding(20).frame(width: 210).background(Palette.canvas)
             Divider()
             ScrollView {
