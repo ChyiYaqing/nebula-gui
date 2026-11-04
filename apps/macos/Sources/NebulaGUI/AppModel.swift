@@ -233,7 +233,11 @@ import NebulaClient
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         busy = true; defer { busy = false }
         do { _ = try await client.send(BackendRequest(method: "remove", profileID: selected.id), as: Acknowledgement.self); await refresh() }
-        catch { setProblem(error) }
+        catch {
+            let issue = error
+            if (issue as? BackendProblem)?.code == "profile_cleanup_pending" { await refresh() }
+            setProblem(issue)
+        }
     }
     func rollbackSelected() async {
         guard let selected, !busy, !shuttingDown else { return }; busy = true; defer { busy = false }
