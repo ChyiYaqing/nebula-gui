@@ -324,3 +324,13 @@ Codex 对普通用户后台的导入与存储做了只读审查，报告了 5 �
 现在 `config.yaml` 用 `O_EXCL|O_NOFOLLOW`、0600 创建并同步；`atomicJSON` 在 rename 后同步所在目录；`Save` 在发布索引前同步版本目录；`Remove` 在删除文件前同步删除标记所在的目录，同步失败时按“清理待重试”处理。顺序为：版本落盘，然后发布索引，最后清理旧版本。
 
 新增 `TestManagedConfigWriteNeverFollowsOrReplaces`：受管配置不会写穿符号链接，也不会覆盖已有文件。断电本身无法在单元测试中模拟，这部分依据代码审查确认顺序；现有的存储、更新、回滚和删除测试全部通过。`go test -race ./...`、`go vet` 和 `bash scripts/test.sh` 通过。
+
+## 2026-11-05 helper 发布号与实机升级（Issue #42）
+
+准备在本机升级时发现：#32、#34、#38 改了 helper 的行为，但没有提升 `HelperRelease`，用最新 main 构建的 App 仍显示“连接后台已启用”，不提供升级。现将发布号提升为 `0.3.1`；Swift 的 `supportsRecovery` 改为依据后端返回的 `updateRequired == false`，不再写死版本号；`AUTHORIZATION.md` 写明改动 helper 代码时必须提升发布号。新增 `testRecoveryFollowsTheBackendReleaseCheck`。`bash scripts/test.sh`（client 35、GUI 32、终止 4）、`go vet`、`go test -race ./...` 和 `git diff --check` 通过。
+
+实机：新构建连接旧 helper（0.3.0）时显示“连接后台可升级”。用户通过 GUI 授权升级后：
+- 安装的 helper 与 App 内组件 SHA-256 一致，属主 root:wheel、0755；启动项 root:wheel、0644；只有一个 helper 进程。
+- `helper.sock` 为 socket、属于 uid 501、权限 0600。
+- 用临时生成的凭据直接向 helper socket 发送 `connect`：主机证书网段为公网（198.51.100.0/24）时返回 `unsupported`（字段 `pki.cert`）；超过 4096 个键的 YAML 对象返回 `invalid_yaml`。两次都返回 `helperRelease=0.3.1`、未启动隧道，也没有出现对应地址的接口。临时凭据已删除。
+- 通过 GUI 连接真实网络，隧道启动并出现 utun；断开后 utun 移除，helper 和 socket 保持正常。
