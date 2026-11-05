@@ -68,6 +68,8 @@ extension BackendClient: AppBackend {}
     var selected: NetworkProfile? { profiles.first { $0.id == selectedID } }
     var active: NetworkProfile? { profiles.first { $0.id == status.profileID } }
     var isCurrentStarted: Bool { status.isStarted && status.profileID == selectedID }
+    /// The menu shows the network its primary action targets: the active one while started, else the selection.
+    var menuProfile: NetworkProfile? { status.isStarted ? (active ?? selected) : selected }
     var connectionActionTitle: String {
         isCurrentStarted ? "断开连接" : !authorization.available ? "启用连接后台" : status.isStarted ? "切换并连接" : "连接网络"
     }

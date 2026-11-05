@@ -101,4 +101,30 @@ extension AppModelTests {
         XCTAssertEqual(backend.calls.last?.profileID, "first")
         _ = await model.shutdown(); clock.cancel()
     }
+    func testMenuShowsTheNetworkItsActionTargets() async throws {
+        let backend = controlledBackend(), model = try model(backend)
+        model.profiles = [try profile("first", name: "研发网络"), try profile("second", name: "家庭网络")]
+        model.status = ConnectionStatus(state: "failed", profileID: "first",
+            error: BackendProblem(code: "cleanup_incomplete", message: "Test"), peers: [])
+        model.selectedID = "second"
+        XCTAssertEqual(model.menuProfile?.id, "second")
+        let shown = ConnectionPresentation(model: model, profileID: model.menuProfile?.id)
+        XCTAssertTrue(shown.detail.contains("研发网络"), shown.detail)
+        XCTAssertEqual(model.menuActionTitle, "连接所选网络")
+        XCTAssertTrue(backend.calls.isEmpty)
+        // The menu action connects exactly the network the menu shows.
+        let recovering = backend.expect("recover")
+        let task = Task { await model.connectSelected() }
+        await fulfillment(of: [recovering], timeout: 2)
+        let connecting = backend.expect("connect")
+        try backend.reply("recover", ConnectionStatus.disconnected)
+        await fulfillment(of: [connecting], timeout: 2)
+        XCTAssertEqual(backend.calls.last?.profileID, model.menuProfile?.id)
+        try backend.reply("connect", started("second")); await task.value
+        // Once started, the menu shows the active network and its action disconnects.
+        model.selectedID = "first"
+        XCTAssertEqual(model.menuProfile?.id, "second")
+        XCTAssertEqual(model.menuActionTitle, "断开连接")
+        _ = await model.shutdown()
+    }
 }

@@ -214,3 +214,11 @@ Go race 全套、Go vet、44 个 Swift 用例（27 个客户端、17 个实际�
 `bash scripts/test.sh` 通过：Go race 全套、56 个 Swift 用例（新增 10 项真实 AppModel 受控测试，覆盖成功、无回复、局部失败、重复点击、目标编辑、会话替换、重连后旧结果隐藏、断开、切换和退出）、4 项 AppKit 退出场景。`go vet`、`git diff --check`、预览隔离检查也都通过。
 
 新增 `probe-running`、`probe-reply`、`probe-silent`、`probe-error` 预览场景（17 个合成节点），在 760 宽浅色／深色下检查：行内与顶部反馈可见，没有溢出，渲染期间没有后台请求。这些是合成预览和测试替身，没有用真实隧道测试节点探测按钮；#4 的实机矩阵保持未完成。
+
+## 2026-11-05 菜单栏显示目标与操作一致（Issue #26）
+
+修复前，网络 A 连接失败或正在恢复（`status.profileID = A`）而侧栏选中 B 时，菜单栏面板按 `active ?? selected` 显示 A，"连接所选网络"按钮却连接 B。新增的回归测试先用旧表达式运行，失败（菜单显示 A，详情没有归属说明）。
+
+修复后，`AppModel.menuProfile` 在隧道已启动时返回活动网络，否则返回所选网络，菜单面板显示的始终是主按钮操作的网络。A 的失败或恢复由 #24 的"连接未完成：A／自动恢复：A"文案和错误提示说明，"停止自动恢复"入口保留。测试同时确认：菜单操作实际连接的 `profileID` 与菜单显示一致；已启动时菜单显示活动网络，按钮为断开。
+
+`bash scripts/test.sh` 通过：Go race 全套、57 个 Swift 用例、4 项 AppKit 退出场景。`go vet`、`git diff --check` 和预览隔离检查也都通过。`failed-other`、`recovering-other`、`connected` 的菜单快照在浅色／深色下检查过，没有溢出，也没有后台请求。这些是合成预览，不算实机验收。
