@@ -103,3 +103,6 @@ NEBULA_GUI_APP_OUTPUT="$PWD/build/Next/Nebula.app" bash scripts/test.sh
 ```
 
 隔离 `--data-dir` 实例不发送系统通知。新版本建议构建到 `build/Completion/Nebula.app`，避免覆盖正在运行的版本。详细范围见 [macOS 补全方案](MACOS_COMPLETION.md)。
+
+
+CI: [macOS PR checks](CI.md).

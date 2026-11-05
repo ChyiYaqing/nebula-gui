@@ -2,11 +2,7 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 KERNEL="$ROOT/../nebula"
-EXPECTED=fb4ef139cbb4af67d142c72083fb735f56460e50
-if [ "$(git -C "$KERNEL" rev-parse HEAD)" != "$EXPECTED" ]; then
-  echo "Nebula checkout differs from the reviewed kernel revision; review and update the pin first." >&2
-  exit 1
-fi
+bash "$ROOT/scripts/verify-kernel.sh" "$KERNEL"
 mkdir -p "$ROOT/.build/bin"
 (cd "$ROOT/backend" && go build -trimpath -o "$ROOT/.build/bin/nebula-gui-backend" ./cmd/nebula-gui-backend)
 (cd "$ROOT/backend" && go build -trimpath -o "$ROOT/.build/bin/nebula-gui-helper" ./cmd/nebula-gui-helper)
