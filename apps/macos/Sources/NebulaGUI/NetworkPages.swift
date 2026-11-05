@@ -75,10 +75,25 @@ struct NetworkNodes: View {
     let profile: NetworkProfile
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
+            if model.isCurrentStarted {
+                VStack(alignment: .leading, spacing: 12) {
+                    SectionTitle(title: "节点连通测试", symbol: "waveform.path.ecg")
+                    HStack {
+                        TextField("Nebula 节点 IP 地址", text: $model.probeAddress).textFieldStyle(.roundedBorder)
+                            .onSubmit { Task { await model.testNode() } }
+                            .accessibilityLabel("Nebula 节点 IP 地址")
+                        Button("测试节点") { Task { await model.testNode() } }
+                            .frame(minHeight: 40)
+                            .disabled(model.probeBusy || model.busy || model.probeAddress.trimmingCharacters(in: .whitespaces).isEmpty)
+                    }
+                    if let probe = model.currentProbe { ProbeFeedback(probe: probe, showsAddress: true) }
+                }.nebulaSurface()
+            }
             if model.status.profileID == profile.id {
-                PeerListView(peers: model.status.peers, canProbe: model.isCurrentStarted && !model.busy, probeBusy: model.probeBusy,
+                PeerListView(peers: model.status.peers, canProbe: model.isCurrentStarted && !model.busy,
+                    probeBusy: model.probeBusy, probe: model.currentProbe,
                     copy: { model.copyNodeAddress($0) },
-                    probe: { model.probeAddress = $0; Task { await model.testNode() } }).id(profile.id)
+                    test: { address in Task { await model.testNode(address) } }).id(profile.id)
             } else {
                 VStack(alignment: .leading, spacing: 12) {
                     SectionTitle(title: "连接后查看节点", symbol: "point.3.connected.trianglepath.dotted")
@@ -86,33 +101,41 @@ struct NetworkNodes: View {
                         .font(.callout).foregroundStyle(.secondary)
                 }.nebulaSurface()
             }
-            if model.isCurrentStarted {
-                Divider()
-                VStack(alignment: .leading, spacing: 12) {
-                    SectionTitle(title: "节点连通测试", symbol: "waveform.path.ecg")
-                    HStack {
-                        TextField("Nebula 节点 IP 地址", text: $model.probeAddress).textFieldStyle(.roundedBorder)
-                            .onSubmit { Task { await model.testNode() } }
-                            .accessibilityLabel("Nebula 节点 IP 地址")
-                        if model.probeBusy { ProgressView().controlSize(.small) }
-                        Button("测试节点") { Task { await model.testNode() } }
-                            .frame(minHeight: 40)
-                            .disabled(model.probeBusy || model.busy || model.probeAddress.isEmpty)
+        }
+    }
+}
+
+/// One node test, shown beside its address and in the manual test area.
+struct ProbeFeedback: View {
+    let probe: NodeProbe
+    let showsAddress: Bool
+    private var prefix: String { showsAddress ? probe.address + "：" : "" }
+    var body: some View {
+        Group {
+            if let result = probe.result {
+                VStack(alignment: .leading, spacing: 3) {
+                    if result.received == 0 {
+                        Label(prefix + "未收到回复（\(result.sent) 次）", systemImage: "questionmark.circle")
+                        Text("节点可能禁止 ICMP 探测，不代表远端离线，请结合实际访问确认。").foregroundStyle(.secondary)
+                    } else {
+                        Label(prefix + "\(result.received)／\(result.sent) 回复 · 丢包 \(result.lossPercent.map { "\($0)%" } ?? "未测得")"
+                            + (result.averageMS.map { String(format: " · 平均 %.1f ms", $0) } ?? ""), systemImage: "checkmark.circle")
+                            .foregroundStyle(Palette.accent)
                     }
-                    if let result = model.probeResult {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("\(result.address)：\(result.received)／\(result.sent) 回复")
-                            Text("丢包 \(result.lossPercent.map { "\($0)%" } ?? "未测得")")
-                            if let milliseconds = result.averageMS { Text(String(format: "平均往返 %.1f ms", milliseconds)) }
-                            if result.received == 0 {
-                                Text("未收到 ICMP 回复。节点可能禁止探测，请结合实际访问确认。").foregroundStyle(.secondary)
-                            }
-                            Text("测试于 " + eventTime(result.observedAt)).foregroundStyle(.secondary)
-                        }.font(.caption).nebulaSurface()
-                    }
+                    Text("测试于 " + eventTime(result.observedAt)).foregroundStyle(.secondary)
+                }
+            } else if let problem = probe.problem {
+                Label(prefix + problem.message, systemImage: "exclamationmark.triangle").foregroundStyle(.orange)
+            } else {
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.small)
+                    Text(prefix + "正在测试…").foregroundStyle(.secondary)
                 }
             }
         }
+        .font(.caption).fixedSize(horizontal: false, vertical: true)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
     }
 }
 

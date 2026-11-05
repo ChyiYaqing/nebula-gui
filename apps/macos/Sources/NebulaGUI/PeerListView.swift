@@ -5,8 +5,9 @@ struct PeerListView: View {
     let peers: [KnownPeer]
     let canProbe: Bool
     let probeBusy: Bool
+    let probe: NodeProbe?
     let copy: (String) -> Void
-    let probe: (String) -> Void
+    let test: (String) -> Void
     @State private var query = ""
     @State private var filter: PeerFilter = .all
     @State private var limit = 50
@@ -42,14 +43,17 @@ struct PeerListView: View {
                             Text(peer.pending ? "待握手" : "活动隧道").foregroundStyle(.secondary)
                         }
                         ForEach(peer.addresses, id: \.self) { address in
+                          VStack(alignment: .leading, spacing: 4) {
                             HStack(spacing: 8) {
                                 Text(address).monospaced().textSelection(.enabled).lineLimit(1).truncationMode(.middle)
                                     .frame(maxWidth: .infinity, alignment: .leading).help(address)
                                 CopyAddressButton(address: address, label: "复制节点地址 \(address)") { copy(address) }
-                                Button { probe(address) } label: { Label("测试", systemImage: "waveform.path.ecg").frame(minHeight: 40) }
+                                Button { test(address) } label: { Label("测试", systemImage: "waveform.path.ecg").frame(minHeight: 40) }
                                     .disabled(!canProbe || probeBusy).help("测试 \(address)")
                                     .accessibilityLabel("测试节点 \(address)")
                             }
+                            if let probe, probe.address == address { ProbeFeedback(probe: probe, showsAddress: false) }
+                          }
                         }
                     }.padding(.vertical, 6)
                     Divider()
