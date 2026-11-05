@@ -316,3 +316,11 @@ Codex 对普通用户后台的导入与存储做了只读审查，报告了 5 �
 新增 3 个测试，修正前全部失败、修正后通过。
 
 另外两项的处理：存储写入缺少文件和目录的同步，另立 Issue。自定义 `--store` 位于不可信父目录时存在目录替换竞争；GUI 始终使用 `~/Library/Application Support/NebulaGUI`，`--data-dir` 只用于开发和测试，因此只记录，不修改。
+
+## 2026-11-05 受管存储断电一致性（Issue #40）
+
+同一次后台审查发现：受管存储在进程被终止时安全（rename 是原子的），但断电后不一定一致。`config.yaml` 写入后没有同步，rename 之后也没有同步目录；更新后立即清理旧版本、删除时改名后立即删除文件，都可能在断电后留下指向已删除版本的索引。
+
+现在 `config.yaml` 用 `O_EXCL|O_NOFOLLOW`、0600 创建并同步；`atomicJSON` 在 rename 后同步所在目录；`Save` 在发布索引前同步版本目录；`Remove` 在删除文件前同步删除标记所在的目录，同步失败时按“清理待重试”处理。顺序为：版本落盘，然后发布索引，最后清理旧版本。
+
+新增 `TestManagedConfigWriteNeverFollowsOrReplaces`：受管配置不会写穿符号链接，也不会覆盖已有文件。断电本身无法在单元测试中模拟，这部分依据代码审查确认顺序；现有的存储、更新、回滚和删除测试全部通过。`go test -race ./...`、`go vet` 和 `bash scripts/test.sh` 通过。
