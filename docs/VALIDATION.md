@@ -222,3 +222,18 @@ Go race 全套、Go vet、44 个 Swift 用例（27 个客户端、17 个实际�
 修复后，`AppModel.menuProfile` 在隧道已启动时返回活动网络，否则返回所选网络，菜单面板显示的始终是主按钮操作的网络。A 的失败或恢复由 #24 的"连接未完成：A／自动恢复：A"文案和错误提示说明，"停止自动恢复"入口保留。测试同时确认：菜单操作实际连接的 `profileID` 与菜单显示一致；已启动时菜单显示活动网络，按钮为断开。
 
 `bash scripts/test.sh` 通过：Go race 全套、57 个 Swift 用例、4 项 AppKit 退出场景。`go vet`、`git diff --check` 和预览隔离检查也都通过。`failed-other`、`recovering-other`、`connected` 的菜单快照在浅色／深色下检查过，没有溢出，也没有后台请求。这些是合成预览，不算实机验收。
+
+## 2026-11-05 Beta 打包分支合并 main（PR #16 / Issue #8）
+
+把 main（截至 #27）普通合并进 `feat/8-macos-beta-packaging`。冲突文件内容由 Codex 起草；git 操作、逐行审核和验证由 Claude 完成。
+
+- `build.sh`：保留 VERSION／BUILD_NUMBER、release 配置、Go 版本注入、构建清单和 `verify-app.py`。加入 main 的原创图标生成，图标在签名和生成清单之前写入。Info.plist 同时声明 `CFBundleIconFile` 和来自文件的版本号。固定内核修订与 `verify-kernel.sh` 两边一致，没有放宽。
+- `Views.swift`：采用 main 的分页结构，只把侧栏版本改为读取 Bundle。
+- `verify-app.py`：新增严格的文件／目录白名单，要求含 AppIcon.icns，并校验清单中的图标哈希，拒绝符号链接和意外文件。`test-package.py` 新增 6 项负向用例：图标声明错误、篡改、缺失，以及多余文件、目录、符号链接。
+
+验证（Apple Silicon，macOS 27.2）：
+- `bash scripts/test.sh` 通过：Go race、27 个客户端与 30 个 GUI Swift 用例、4 项 AppKit 退出场景。`go vet` 通过。
+- release 构建、`verify-app.py`、`test-package.py`（全部负向用例）通过，`nebula-ui-preview --verify-isolation` 通过。
+- 在干净工作区运行 `package-beta.sh`，生成内部候选 0.3.2 build 5：`sourceDirty=false`、release 配置、含 AppIcon.icns，归档回读校验通过。
+
+未验收：干净机器安装／升级失败／卸载、macOS 13 与 Intel、Developer ID 签名与公证。产物为 ad-hoc 签名，没有上传或安装，PR 继续保持 Draft。
