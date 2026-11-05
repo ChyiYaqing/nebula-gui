@@ -240,3 +240,13 @@ Go race 全套、Go vet、44 个 Swift 用例（27 个客户端、17 个实际�
 - `bash scripts/test.sh` 通过：Go race、33 个客户端与 30 个 GUI Swift 用例、4 项 AppKit 退出场景。`go vet`、`git diff --check` 也通过。
 - 预览隔离检查通过。配置页 760 宽浅色／深色截图没有溢出。
 - 真实系统通知显示，以及系统设置中撤销／恢复权限的实机验证仍需用户操作，本 PR 继续保持 Draft。
+
+## 2026-11-05 关闭主窗口后从 Dock 重新打开（Issue #28）
+
+在 #4 的实机验收 A01 中发现：关闭主窗口后，App 激活并收到 reopen 事件（与点击 Dock 图标相同），但没有任何窗口出现，只能从菜单栏的"打开 Nebula"进入。原因是 `AppDelegate` 没有处理 reopen，SwiftUI 的单例 `Window` 场景关闭后不会因此自动重建。
+
+修复后，菜单栏标签（整个 App 会话期间一直存在）把 SwiftUI 的 `openWindow` 注册给 `AppDelegate`；收到 reopen 且没有可见窗口时，打开主窗口 `main`。
+
+实机验证（macOS 27.2 / arm64，生产数据目录中的真实配置）：GUI 连接后关闭主窗口，utun0 保持 2 条路由；先 `activate` 再发送 reopen，主窗口重新出现并显示"隧道已启动"，进程与路由不变。这个场景没有单元测试替身，以实机结果为准。
+
+`bash scripts/test.sh` 通过：Go race、57 个 Swift 用例、4 项退出场景。预览隔离检查和 `git diff --check` 也通过。
