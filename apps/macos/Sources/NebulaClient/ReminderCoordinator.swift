@@ -16,25 +16,37 @@ import Foundation
     private var latestPlan: [CertificateReminder] = []
     private var latestObservation = Date.distantPast
     private var synchronizing = false
+    private var waiting: [CheckedContinuation<Void, Error>] = []
     public private(set) var history: [String: Double]
     public private(set) var permissionAllowed = false
     public init(delivery: any ReminderDelivery, history: [String: Double] = [:]) {
         self.delivery = delivery; self.history = history
     }
     /// Coalesces updates while one system operation is in flight. The active
-    /// caller drains the latest plan before returning; newer callers enqueue it.
+    /// caller drains the latest plan; every caller returns only once that plan
+    /// has been applied, and receives its failure, so disabling cannot return early.
     public func synchronize(_ reminders: [CertificateReminder], enabled: Bool, now: Date) async throws {
         generation &+= 1
         self.enabled = enabled; latestPlan = reminders; latestObservation = now
-        guard !synchronizing else { return }
+        guard !synchronizing else {
+            try await withCheckedThrowingContinuation { waiting.append($0) }
+            return
+        }
         synchronizing = true
-        defer { synchronizing = false }
+        var failure: Error?
         while true {
             let token = generation
+            failure = nil
             do { try await reconcile(latestPlan, enabled: self.enabled, now: latestObservation, token: token) }
-            catch { if token == generation { throw error } }
-            if token == generation { return }
+            catch { if token == generation { failure = error } }
+            if token == generation { break }
         }
+        synchronizing = false
+        let waiters = waiting; waiting = []
+        for waiter in waiters {
+            if let failure { waiter.resume(throwing: failure) } else { waiter.resume() }
+        }
+        if let failure { throw failure }
     }
     private func reconcile(_ reminders: [CertificateReminder], enabled: Bool, now: Date, token: UInt64) async throws {
         let relevant = Set(reminders.map(\.id))

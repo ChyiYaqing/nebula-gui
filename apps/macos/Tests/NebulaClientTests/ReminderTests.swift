@@ -36,6 +36,7 @@ final class ReminderTests: XCTestCase {
     var holdAdd = true
     var addCount = 0
     var allowed = true
+    var failAdd = false
     func authorized() async -> Bool { allowed }
     var pendingQueries = 0
     var holdSecondSnapshot = false
@@ -53,6 +54,7 @@ final class ReminderTests: XCTestCase {
     func add(_ reminder: CertificateReminder, now: Date) async throws {
         addCount += 1
         if holdAdd { await withCheckedContinuation { adding = $0 } }
+        if failAdd { throw BackendProblem(code: "operation_failed", message: "Test") }
         pending.insert(reminder.id)
     }
 }
@@ -65,11 +67,16 @@ extension ReminderTests {
         let reminder = CertificateReminder(id: CertificateReminders.identifierPrefix + "test", fireAt: now, days: 1)
         let first = Task { try await coordinator.synchronize([reminder], enabled: true, now: now) }
         while delivery.adding == nil { await Task.yield() }
-        try await coordinator.synchronize([], enabled: false, now: now)
+        let returned = Flag()
+        let disabling = Task { try await coordinator.synchronize([], enabled: false, now: now); returned.value = true }
+        for _ in 0..<100 { await Task.yield() }
+        // Disabling must not report completion while the earlier system add is outstanding.
+        XCTAssertFalse(returned.value)
         delivery.adding?.resume(); delivery.adding = nil
-        try await first.value
+        try await disabling.value
         XCTAssertTrue(delivery.pending.isEmpty)
         XCTAssertTrue(coordinator.history.isEmpty)
+        try await first.value
     }
     @MainActor func testNewPlanCannotBeOverwrittenByOldAdd() async throws {
         let delivery = DelayedReminderDelivery()
@@ -80,8 +87,11 @@ extension ReminderTests {
         let first = Task { try await coordinator.synchronize([old], enabled: true, now: now) }
         while delivery.adding == nil { await Task.yield() }
         delivery.holdAdd = false
-        try await coordinator.synchronize([new], enabled: true, now: now)
+        let second = Task { try await coordinator.synchronize([new], enabled: true, now: now) }
+        for _ in 0..<100 { await Task.yield() }
         delivery.adding?.resume(); delivery.adding = nil
+        try await second.value
+        XCTAssertEqual(delivery.pending, Set([new.id]))
         try await first.value
         XCTAssertEqual(delivery.pending, Set([new.id]))
         XCTAssertNil(coordinator.history[old.id])
@@ -164,9 +174,12 @@ extension ReminderTests {
         let first = Task { try await coordinator.synchronize([old], enabled: true, now: now) }
         while delivery.adding == nil { await Task.yield() }
         let new = (0..<60).map { CertificateReminder(id: CertificateReminders.identifierPrefix + "new-\($0)", fireAt: now.addingTimeInterval(50), days: 1) } + [old]
-        let accepted = XCTestExpectation(description: "latest plan accepted without overlapping system calls")
-        let second = Task { try await coordinator.synchronize(new, enabled: true, now: now); accepted.fulfill() }
-        await fulfillment(of: [accepted], timeout: 2)
+        let returned = Flag()
+        let second = Task { try await coordinator.synchronize(new, enabled: true, now: now); returned.value = true }
+        for _ in 0..<100 { await Task.yield() }
+        // The latest plan is queued without overlapping system calls, and its caller waits for it.
+        XCTAssertFalse(returned.value)
+        XCTAssertEqual(delivery.addCount, 1)
         delivery.holdAdd = false; delivery.adding?.resume(); delivery.adding = nil
         while delivery.readingPending == nil { await Task.yield() }
         delivery.readingPending?.resume(returning: delivery.capturedPending); delivery.readingPending = nil
@@ -190,5 +203,28 @@ extension ReminderTests {
         delivery.pending.removeAll()
         try await coordinator.synchronize(urgent + old, enabled: true, now: now.addingTimeInterval(20))
         XCTAssertEqual(delivery.pending, Set(old.map(\.id)))
+    }
+}
+
+@MainActor private final class Flag { var value = false }
+
+extension ReminderTests {
+    @MainActor func testQueuedCallerReceivesTheLatestPlanFailure() async throws {
+        let delivery = DelayedReminderDelivery()
+        let coordinator = ReminderCoordinator(delivery: delivery)
+        let now = Date()
+        let old = CertificateReminder(id: CertificateReminders.identifierPrefix + "old", fireAt: now.addingTimeInterval(100), days: 1)
+        let new = CertificateReminder(id: CertificateReminders.identifierPrefix + "new", fireAt: now.addingTimeInterval(100), days: 7)
+        let first = Task { try await coordinator.synchronize([old], enabled: true, now: now) }
+        while delivery.adding == nil { await Task.yield() }
+        let second = Task { try await coordinator.synchronize([new], enabled: true, now: now) }
+        for _ in 0..<100 { await Task.yield() }
+        delivery.holdAdd = false; delivery.failAdd = true
+        delivery.adding?.resume(); delivery.adding = nil
+        for task in [first, second] {
+            do { try await task.value; XCTFail("A failed latest plan was reported as applied") }
+            catch { XCTAssertEqual((error as? BackendProblem)?.code, "operation_failed") }
+        }
+        XCTAssertTrue(delivery.pending.isEmpty)
     }
 }

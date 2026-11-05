@@ -31,14 +31,17 @@ private final class NotificationPresentation: NSObject, UNUserNotificationCenter
 @MainActor final class CertificateNotifications {
     private let defaults: UserDefaults
     private let allowDelivery: Bool
+    private let delivery: any ReminderDelivery
     private let enabledKey = "certificateNotificationsEnabled"
     private let ledgerKey = "certificateNotificationLedger"
-    private lazy var coordinator = ReminderCoordinator(delivery: SystemReminderDelivery(), history: defaults.dictionary(forKey: ledgerKey) as? [String: Double] ?? [:])
+    private lazy var coordinator = ReminderCoordinator(delivery: delivery, history: defaults.dictionary(forKey: ledgerKey) as? [String: Double] ?? [:])
     var enabled: Bool { allowDelivery && defaults.bool(forKey: enabledKey) }
     var permissionAllowed: Bool { coordinator.permissionAllowed }
-    init(defaults: UserDefaults = .standard, allowDelivery: Bool = true) {
+    /// `delivery` replaces the system notification center in tests.
+    init(defaults: UserDefaults = .standard, allowDelivery: Bool = true, delivery: (any ReminderDelivery)? = nil) {
         self.defaults = defaults; self.allowDelivery = allowDelivery
-        if allowDelivery { UNUserNotificationCenter.current().delegate = NotificationPresentation.shared }
+        self.delivery = delivery ?? SystemReminderDelivery()
+        if allowDelivery && delivery == nil { UNUserNotificationCenter.current().delegate = NotificationPresentation.shared }
     }
     func enable() async throws -> Bool {
         guard allowDelivery else { throw BackendProblem(code: "notifications_isolated", message: "隔离测试实例不发送系统通知。") }
