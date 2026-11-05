@@ -548,18 +548,34 @@ func ServePrivilegedHelper(uid uint32) error {
 			return err
 		}
 	}
+	// Create the socket as 0600, so no wider mode exists before secureSocket.
+	mask := unix.Umask(0177)
 	listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: HelperSocket, Net: "unix"})
+	unix.Umask(mask)
 	if err != nil {
 		return err
 	}
 	defer listener.Close()
 	defer os.Remove(HelperSocket)
-	if err = os.Chown(HelperSocket, int(uid), -1); err != nil {
-		return err
-	}
-	if err = os.Chmod(HelperSocket, 0600); err != nil {
+	if err = secureSocket(HelperSocket, uid); err != nil {
 		return err
 	}
 	server := &HelperServer{AllowedUID: uid, TemporaryRoot: temporary, NewEngine: func() Engine { return &NativeEngine{} }}
 	return runHelperUntilSignal(server, listener)
+}
+
+// secureSocket hands the control socket to its controller. The runtime parent
+// is writable by group daemon, so a planted link must not redirect root's changes.
+func secureSocket(path string, uid uint32) error {
+	if err := unix.Fchownat(unix.AT_FDCWD, path, int(uid), -1, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+		return err
+	}
+	if err := unix.Fchmodat(unix.AT_FDCWD, path, 0600, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+		return err
+	}
+	var st unix.Stat_t
+	if unix.Lstat(path, &st) != nil || st.Mode&unix.S_IFMT != unix.S_IFSOCK || st.Uid != uid || st.Mode&0777 != 0600 {
+		return errors.New("untrusted control socket")
+	}
+	return nil
 }
