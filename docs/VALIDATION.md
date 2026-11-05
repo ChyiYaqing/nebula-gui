@@ -285,3 +285,9 @@ Codex 对 root helper、普通后台的探测和安装脚本做了只读安全�
 - **代码来源未认证、同用户进程都可以驱动 helper（记录为已知限制）。** 需要 Developer ID 才能真正解决，见 `docs/AUTHORIZATION.md`。
 
 审查中确认安全的部分：其他 UID 被拒绝；协议不能选择可执行文件、shell 参数或配置路径；root 只使用内嵌凭据，校验文件位于 root 私有目录；超范围路由、DNS、Lighthouse／Relay 服务端等设置被拒绝；探测没有注入路径；安装脚本的转义与锁处理合理。
+
+## 2026-11-05 helper 控制 socket 不跟随符号链接（Issue #34）
+
+来自 #32 的同一次特权边界审查。helper 原先用完整路径调用 `os.Chown`、`os.Chmod` 设置控制 socket，这两个调用会跟随符号链接；而运行目录的父目录 `/private/var/run` 对 `daemon` 组可写。现在 socket 在 `umask 0177` 下创建，一开始就是 `0600`；属主和权限改用带 `AT_SYMLINK_NOFOLLOW` 的 `Fchownat`／`Fchmodat` 设置，之后再用 `Lstat` 确认它是 socket、属主是受控用户、权限是 `0600`，否则 helper 退出。
+
+新增 `TestSecureSocketDoesNotFollowLinks`。用原来的做法时，该测试检测到链接目标被修改而失败；修正后，链接被拒绝、目标不变，真实 socket 被收紧为 `0600`。`go test -race ./...`、`go vet` 和 `bash scripts/test.sh` 通过。root 下的启动路径需要安装新的 helper 才能实机执行，本次未重新安装。
