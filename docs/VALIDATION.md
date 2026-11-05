@@ -274,3 +274,14 @@ Go race 全套、Go vet、44 个 Swift 用例（27 个客户端、17 个实际�
 新增 `testReminderSyncWaitsForTheFirstNetworkList`（GUI，注入测试用的通知投递）和 `testQueuedCallerReceivesTheLatestPlanFailure`。原有的三项竞争测试改为断言排队调用在系统调用完成前不返回。修正前这些断言均失败；去掉启动门控后，新的 GUI 用例也会失败。
 
 `bash scripts/test.sh` 通过：Go race、34 个客户端与 32 个 GUI Swift 用例、4 项退出场景。预览隔离检查、`go vet` 和 `git diff --check` 也通过。这两处是竞态，不易在实机上稳定复现，本次未做实机验证。
+
+## 2026-11-05 特权边界安全审查与证书网段限制（Issue #32）
+
+Codex 对 root helper、普通后台的探测和安装脚本做了只读安全审查，报告了 5 项问题，我逐条对照代码核实：
+
+- **证书网段可覆盖公网路由（已修复，#32）。** 内核 `overlay/tun_darwin.go` 会为每个证书网段添加系统路由；helper 接受请求自带的 CA，原先只拒绝 `/0`。现在共用的 `Inspect` 只允许非公网网段（IPv4 10/8、172.16/12、192.168/16、100.64/10，IPv6 fc00::/7）。新增 `TestCertificateNetworksMustStayInNonPublicRanges`，覆盖 v2 多网段证书以及导入和 helper 内嵌校验两条路径。修复前，应当拒绝的 4 种情况全部被接受；修复后全部被拒绝，允许的 5 种情况照常通过。用户的真实配置位于私有网段，不受影响。
+- **运行目录父链可被置换、root 的 `chown/chmod` 会跟随符号链接（另立 Issue）。** 前提是攻击者已有 `daemon` 组对 `/var/run` 的写权限，普通用户没有。
+- **探测未绑定受管 utun（另立 Issue）。** 影响是可达性判断不准，不涉及提权。
+- **代码来源未认证、同用户进程都可以驱动 helper（记录为已知限制）。** 需要 Developer ID 才能真正解决，见 `docs/AUTHORIZATION.md`。
+
+审查中确认安全的部分：其他 UID 被拒绝；协议不能选择可执行文件、shell 参数或配置路径；root 只使用内嵌凭据，校验文件位于 root 私有目录；超范围路由、DNS、Lighthouse／Relay 服务端等设置被拒绝；探测没有注入路径；安装脚本的转义与锁处理合理。
