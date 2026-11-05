@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"io"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strings"
@@ -188,8 +189,8 @@ func Inspect(path, name string, files map[string]string, now time.Time) (*Candid
 		return nil, problem("expired", "主机证书已过期，请联系管理员更新。", "pki.cert")
 	}
 	for _, n := range host.Networks() {
-		if n.Bits() == 0 {
-			return nil, problem("unsupported", "主机证书不能声明默认路由。", "pki.cert")
+		if !overlayNetworkAllowed(n) {
+			return nil, problem("unsupported", "主机证书的网段必须位于私有地址范围（IPv4 10/8、172.16/12、192.168/16、100.64/10，IPv6 fc00::/7）。此版本不安装覆盖公网的路由。", "pki.cert")
 		}
 	}
 	if _, err = ca.VerifyCertificate(now, host); err != nil {
@@ -299,4 +300,25 @@ func boundedRuntimeDuration(value any, field string, fallback, minimum, maximum 
 		return 0, problem("unsupported", "计时参数超出安全范围。", field)
 	}
 	return d, nil
+}
+
+// The kernel routes every certificate network to the tunnel as root, and the helper
+// accepts caller-supplied CAs. Keeping networks in non-public ranges means a
+// certificate can never claim the default route, public services or other VPNs.
+var overlayRanges = []netip.Prefix{
+	netip.MustParsePrefix("10.0.0.0/8"),
+	netip.MustParsePrefix("172.16.0.0/12"),
+	netip.MustParsePrefix("192.168.0.0/16"),
+	netip.MustParsePrefix("100.64.0.0/10"),
+	netip.MustParsePrefix("fc00::/7"),
+}
+
+func overlayNetworkAllowed(n netip.Prefix) bool {
+	n = n.Masked()
+	for _, r := range overlayRanges {
+		if n.Bits() >= r.Bits() && r.Contains(n.Addr()) {
+			return true
+		}
+	}
+	return false
 }
