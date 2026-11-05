@@ -49,4 +49,56 @@ extension AppModelTests {
         XCTAssertEqual(ConnectionPresentation(model: model, profileID: model.selectedID).title, "连接未完成")
         XCTAssertTrue(backend.calls.isEmpty)
     }
+    func testFailureOfAnotherNetworkIsAttributedToThatNetwork() throws {
+        let backend = controlledBackend(), model = try model(backend)
+        model.profiles = [try profile("first", name: "研发网络"), try profile("second", name: "家庭网络")]
+        model.status = ConnectionStatus(state: "failed", profileID: "first",
+            error: BackendProblem(code: "cleanup_incomplete", message: "Test"), peers: [])
+        model.selectedID = "second"
+        let other = ConnectionPresentation(model: model, profileID: "second")
+        XCTAssertEqual(other.title, "此网络未连接")
+        XCTAssertEqual(other.tone, .neutral)
+        XCTAssertTrue(other.detail.contains("研发网络"))
+        XCTAssertEqual(ConnectionPresentation(model: model, profileID: "first").title, "连接未完成")
+        XCTAssertTrue(backend.calls.isEmpty)
+    }
+    func testRecoveryOfAnotherNetworkIsAttributedToThatNetwork() async throws {
+        let backend = controlledBackend(), clock = RecoveryClock()
+        let model = AppModel(client: backend, now: { clock.date }, wait: { try await clock.wait($0) })
+        model.profiles = [try profile("first", name: "研发网络"), try profile("second", name: "家庭网络")]
+        model.selectedID = "first"
+        model.authorization = try JSONDecoder().decode(AuthorizationState.self, from: Data(#"{"available":true}"#.utf8))
+        let starting = backend.expect("connect")
+        let task = Task { await model.connectSelected() }
+        await fulfillment(of: [starting], timeout: 2)
+        backend.fail("connect", code: "backend_stopped"); await task.value
+        await fulfillment(of: [clock.requested], timeout: 2)
+        model.selectedID = "second"
+        let calls = backend.calls.count
+        func assertRecoveryAttributedToFirst() {
+            let other = ConnectionPresentation(model: model, profileID: "second")
+            XCTAssertEqual(other.title, "此网络未连接")
+            XCTAssertEqual(other.tone, .neutral)
+            XCTAssertTrue(other.detail.contains("研发网络"), other.detail)
+            XCTAssertEqual(ConnectionPresentation(model: model, profileID: "first").title, "等待恢复")
+            XCTAssertTrue(model.canCancelConnection)
+        }
+        assertRecoveryAttributedToFirst()
+        XCTAssertEqual(backend.calls.count, calls)
+        // A cleared recovery attempt drops status.profileID; the menu then falls back to the selection.
+        let recovering = backend.expect("recover")
+        clock.requested = XCTestExpectation(description: "retry rescheduled"); clock.advance()
+        await fulfillment(of: [recovering], timeout: 2)
+        let reconnecting = backend.expect("connect")
+        try backend.reply("recover", ConnectionStatus.disconnected)
+        await fulfillment(of: [reconnecting], timeout: 2)
+        backend.fail("connect", code: "backend_stopped")
+        await fulfillment(of: [clock.requested], timeout: 2)
+        XCTAssertNil(model.status.profileID)
+        XCTAssertEqual((model.active ?? model.selected)?.id, "second")
+        assertRecoveryAttributedToFirst()
+        XCTAssertEqual(backend.calls.map(\.method), ["connect", "recover", "connect"])
+        XCTAssertEqual(backend.calls.last?.profileID, "first")
+        _ = await model.shutdown(); clock.cancel()
+    }
 }

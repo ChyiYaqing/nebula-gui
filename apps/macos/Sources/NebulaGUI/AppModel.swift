@@ -37,6 +37,8 @@ extension BackendClient: AppBackend {}
     private var notificationsAllowed = true
     private lazy var certificateNotifications = CertificateNotifications(allowDelivery: notificationsAllowed)
     var canCancelConnection: Bool { connectionBusy || (recovery.desiredProfileID != nil && !recoveryText.isEmpty) }
+    /// The network that automatic recovery targets; status.profileID may already be cleared.
+    var recoveryProfileID: String? { recovery.desiredProfileID }
     private var refreshingStatus = false
     @Published var profiles: [NetworkProfile] = []
     @Published var selectedID: String?
