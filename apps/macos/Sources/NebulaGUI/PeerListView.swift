@@ -6,11 +6,13 @@ struct PeerListView: View {
     let canProbe: Bool
     let probeBusy: Bool
     let probe: NodeProbe?
+    var latency: LatencyHistory? = nil
     let copy: (String) -> Void
     let test: (String) -> Void
     @State private var query = ""
     @State private var filter: PeerFilter = .all
     @State private var limit = 50
+    @State private var expanded: Set<String> = []
     private var matching: [KnownPeer] { PeerQuery.matching(peers, text: query, filter: filter) }
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -47,10 +49,23 @@ struct PeerListView: View {
                             HStack(spacing: 8) {
                                 Text(address).monospaced().textSelection(.enabled).lineLimit(1).truncationMode(.middle)
                                     .frame(maxWidth: .infinity, alignment: .leading).help(address)
+                                if let points = latency?.points[address], let stats = latency?.stats(for: address) {
+                                    Button {
+                                        if expanded.remove(address) == nil { expanded.insert(address) }
+                                    } label: {
+                                        LatencyBadge(points: points, stats: stats).frame(minHeight: 40).contentShape(Rectangle())
+                                    }
+                                    .buttonStyle(.borderless)
+                                    .help(expanded.contains(address) ? "收起延迟曲线" : "展开延迟曲线")
+                                    .accessibilityHint(expanded.contains(address) ? "收起延迟曲线" : "展开延迟曲线")
+                                }
                                 CopyAddressButton(address: address, label: "复制节点地址 \(address)") { copy(address) }
                                 Button { test(address) } label: { Label("测试", systemImage: "waveform.path.ecg").frame(minHeight: 40) }
                                     .disabled(!canProbe || probeBusy).help("测试 \(address)")
                                     .accessibilityLabel("测试节点 \(address)")
+                            }
+                            if expanded.contains(address), let points = latency?.points[address], let stats = latency?.stats(for: address) {
+                                LatencyDetail(points: points, stats: stats)
                             }
                             if let probe, probe.address == address { ProbeFeedback(probe: probe, showsAddress: false) }
                           }

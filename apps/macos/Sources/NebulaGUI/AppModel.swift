@@ -29,6 +29,21 @@ extension BackendClient: AppBackend {}
         guard let probe, status.isStarted, status.profileID == probe.profileID, status.startedAt == probe.startedAt else { return nil }
         return probe
     }
+    /// Latency of active tunnels, sampled while the node page is visible. Bound to one
+    /// connection session and kept in memory only.
+    @Published var latency = LatencyHistory()
+    @Published var latencyNote: String?
+    var latencySession: String?
+    private var latencyVisible = false
+    private var latencyTask: Task<Void, Never>?
+    /// The history of the observed session, or nothing once that session has ended.
+    var currentLatency: LatencyHistory? {
+        guard status.isStarted, latencySession == latencySessionKey else { return nil }
+        return latency
+    }
+    private var latencySessionKey: String? {
+        status.profileID.map { "\($0)|\(status.startedAt ?? "")" }
+    }
     @Published var notificationsBusy = false
     @Published var notificationsEnabled = false
     @Published var notificationText = "到期提醒未开启"
@@ -353,13 +368,13 @@ extension BackendClient: AppBackend {}
         }
         shuttingDown = true
         recovery.userDisconnect(); recoveryTask?.cancel(); recoveryTask = nil; networkTask?.cancel(); recoveryText = ""
-        timer?.invalidate()
+        timer?.invalidate(); latencyTask?.cancel(); latencyTask = nil
         do {
             try await client.shutdown(permanently: true); environmentMonitor?.stop()
             if let foregroundObserver { NotificationCenter.default.removeObserver(foregroundObserver); self.foregroundObserver = nil }
             return true
         }
-        catch { shuttingDown = false; busy = false; connectionBusy = false; setProblem(error); startPolling(); return false }
+        catch { shuttingDown = false; busy = false; connectionBusy = false; setProblem(error); startPolling(); setLatencyMonitoring(latencyVisible); return false }
     }
     func setProblem(_ error: Error) {
         problem = error as? BackendProblem ?? BackendProblem(code: "operation_failed", message: "操作未完成，请重试。")
@@ -448,6 +463,38 @@ extension AppModel {
                 guard generation == self.recovery.generation, !self.shuttingDown else { return }
                 self.setProblem(error); await self.refreshStatus()
             }
+        }
+    }
+    /// Started by the node page while it is visible; the production model only.
+    func setLatencyMonitoring(_ visible: Bool) {
+        latencyVisible = visible
+        latencyTask?.cancel(); latencyTask = nil
+        guard visible, servicesEnabled, !shuttingDown else { return }
+        latencyTask = Task { [weak self] in
+            while !Task.isCancelled {
+                guard let self else { return }
+                await self.sampleLatency()
+                do { try await self.wait(5) } catch { return }
+            }
+        }
+    }
+    /// One monitoring round. Skipped while asleep or busy; a result that arrives after the
+    /// session changed is dropped.
+    func sampleLatency() async {
+        guard !shuttingDown, !sleeping, !busy, status.isStarted, let session = latencySessionKey else { return }
+        if latencySession != session { latency = LatencyHistory(); latencySession = session; latencyNote = nil }
+        let targets = LatencyHistory.targets(status.peers)
+        latency.retain(Set(targets))
+        guard !targets.isEmpty else { return }
+        let generation = recovery.generation
+        do {
+            let batch = try await client.send(BackendRequest(method: "sample", addresses: targets), as: LatencyBatch.self)
+            guard !shuttingDown, generation == recovery.generation, latencySessionKey == session, latencySession == session else { return }
+            latency.record(batch, at: now()); latencyNote = nil
+        } catch {
+            guard latencySession == session else { return }
+            // Local note only: monitoring never replaces a connection problem.
+            latencyNote = (error as? BackendProblem)?.message ?? "本轮监测未完成，稍后自动重试。"
         }
     }
     /// Tests `target`, or the manual address. Only the started, selected network can be probed.

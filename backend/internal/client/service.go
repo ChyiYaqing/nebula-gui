@@ -20,6 +20,9 @@ type Service struct {
 	startedAt *time.Time
 	lastProbe time.Time
 	probe     func(context.Context, string, netip.Addr) (ProbeResult, error)
+	// Latency monitoring: one echo per active node, limited separately from manual tests.
+	lastSample time.Time
+	sample     func(context.Context, string, netip.Addr) (ProbeResult, error)
 }
 
 func NewService(s *Store, e Engine) *Service { return &Service{store: s, engine: e, events: []Event{}} }
@@ -229,6 +232,39 @@ func (s *Service) invoke(r Request) (any, error) {
 			s.event("node_probe_finished")
 		}
 		return result, err
+	case "sample":
+		if s.status().State != "started" {
+			return nil, problem("not_connected", "请先连接网络，再监测节点。", "")
+		}
+		if len(r.Addresses) == 0 || len(r.Addresses) > maxSampleTargets {
+			return nil, problem("invalid_request", "监测地址数量超出范围。", "addresses")
+		}
+		profile, _, err := s.store.Load(s.active)
+		if err != nil {
+			return nil, err
+		}
+		targets := make([]netip.Addr, 0, len(r.Addresses))
+		seen := map[netip.Addr]bool{}
+		for _, text := range r.Addresses {
+			address, err := validateProbeTarget(text, profile.Networks)
+			if err != nil {
+				return nil, err
+			}
+			if seen[address] {
+				return nil, problem("invalid_request", "监测地址重复。", "addresses")
+			}
+			seen[address] = true
+			targets = append(targets, address)
+		}
+		if time.Since(s.lastSample) < 4*time.Second {
+			return nil, problem("probe_rate_limited", "节点监测过于频繁，请稍候。", "")
+		}
+		s.lastSample = time.Now()
+		sample := s.sample
+		if sample == nil {
+			sample = sampleNode
+		}
+		return sampleLatency(targets, profile.Networks, sample), nil
 	case "recover":
 		worker, ok := s.engine.(interface{ RecoverChecked() error })
 		if !ok {

@@ -78,6 +78,35 @@ import NebulaClient
                 if scenario == "probe-error" { probe.problem = BackendProblem(code: "probe_rate_limited", message: "合成错误：请稍候再测试节点。") }
                 model.probe = probe; model.probeAddress = "192.0.2.99"
             }
+            if scenario == "latency" || scenario == "latency-empty" {
+                // Synthetic monitoring history: five minutes of rounds with stable, unstable, lossy and silent nodes.
+                let nodes = try! JSONDecoder().decode([KnownPeer].self, from: Data(("[" + (1...6).map {
+                    #"{"name":"合成节点 \#($0)","addresses":["192.0.2.\#(40 + $0)"],"pending":\#($0 == 6)}"#
+                }.joined(separator: ",") + "]").utf8))
+                let startedAt = "2026-11-05T02:00:00Z"
+                model.status = ConnectionStatus(state: "started", profileID: first.id, error: nil, peers: peers + nodes, startedAt: startedAt)
+                model.latencySession = "\(first.id)|\(startedAt)"
+                if scenario == "latency" {
+                    let origin = Date(timeIntervalSince1970: 1_793_930_000)
+                    for round in 0..<LatencyHistory.capacity {
+                        let wave = sin(Double(round) / 3), jitter = Double((round * 37) % 11)
+                        let replies: [(String, Double?)] = [
+                            ("192.0.2.12", 18 + wave * 2 + jitter * 0.3),
+                            ("192.0.2.20", 40 + jitter * 9),
+                            ("192.0.2.41", round % 9 == 4 ? nil : 27 + wave * 3 + jitter * 0.5),
+                            ("192.0.2.42", nil),
+                            ("192.0.2.43", 8.4 + wave * 0.6),
+                            ("192.0.2.44", 63 + wave * 5 + jitter),
+                            ("192.0.2.45", 31 + wave * 2),
+                        ]
+                        let samples = replies.map { address, ms in
+                            #"{"address":"\#(address)","measured":true\#(ms.map { ",\"replyMS\":\($0)" } ?? "")}"#
+                        }.joined(separator: ",")
+                        let batch = try! JSONDecoder().decode(LatencyBatch.self, from: Data(#"{"observedAt":"\#(startedAt)","samples":[\#(samples)]}"#.utf8))
+                        model.latency.record(batch, at: origin.addingTimeInterval(Double(round) * 5))
+                    }
+                }
+            }
             if scenario == "empty" { model.profiles = []; model.selectedID = nil }
             if scenario == "missing" || scenario == "unavailable" { model.authorization = .missing }
             if scenario == "failed" || scenario == "failed-other" {
@@ -96,7 +125,7 @@ import NebulaClient
                 .environment(\.colorScheme, dark ? .dark : .light)
                 .transaction { if args.contains("--disable-animations") { $0.disablesAnimations = true } })
             let width = args.contains("--menu") ? 356 : max(760, Double(option("--width", fallback: "900")) ?? 900)
-            let height = args.contains("--menu") ? 680.0 : 720.0
+            let height = args.contains("--menu") ? 680.0 : max(720, Double(option("--height", fallback: "720")) ?? 720)
             let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: height),
                 styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
             window.title = "Nebula UI Preview · 合成数据 · 不连接"

@@ -7,12 +7,52 @@ import (
 	"encoding/binary"
 	"net"
 	"net/netip"
+	"sync"
 	"time"
 
 	"golang.org/x/net/icmp"
 	"golang.org/x/net/ipv4"
 	"golang.org/x/net/ipv6"
 )
+
+const maxSampleTargets = 64
+
+type LatencySample struct {
+	Address  string   `json:"address"`
+	Measured bool     `json:"measured"`
+	ReplyMS  *float64 `json:"replyMS,omitempty"`
+}
+type LatencyBatch struct {
+	ObservedAt time.Time       `json:"observedAt"`
+	Samples    []LatencySample `json:"samples"`
+}
+
+// sampleLatency measures every target once, all in parallel within one short shared
+// deadline: requests to the backend are serial, so a batch must not delay user actions.
+// A target whose socket could not be opened, or which ran out of time, is reported as
+// not measured instead of as a lost reply.
+func sampleLatency(targets []netip.Addr, networks []string, sample func(context.Context, string, netip.Addr) (ProbeResult, error)) LatencyBatch {
+	ctx, cancel := context.WithTimeout(context.Background(), 1200*time.Millisecond)
+	defer cancel()
+	samples := make([]LatencySample, len(targets))
+	var wait sync.WaitGroup
+	for i, target := range targets {
+		samples[i].Address = target.String()
+		wait.Add(1)
+		go func(i int, target netip.Addr) {
+			defer wait.Done()
+			local, _ := probeSource(target, networks)
+			result, err := sample(ctx, target.String(), local)
+			if err != nil || result.Sent == 0 {
+				return
+			}
+			samples[i].Measured = true
+			samples[i].ReplyMS = result.AverageMS
+		}(i, target)
+	}
+	wait.Wait()
+	return LatencyBatch{ObservedAt: time.Now().UTC(), Samples: samples}
+}
 
 type ProbeResult struct {
 	Address    string    `json:"address"`
@@ -72,9 +112,19 @@ func probeNode(ctx context.Context, target string, local netip.Addr) (ProbeResul
 		return ProbeResult{}, err
 	}
 	defer conn.Close()
-	return probeEcho(ctx, conn, target, time.Second)
+	return probeEcho(ctx, conn, target, time.Second, 3)
 }
-func probeEcho(ctx context.Context, conn net.PacketConn, target string, wait time.Duration) (ProbeResult, error) {
+
+// sampleNode sends one echo; used by latency monitoring.
+func sampleNode(ctx context.Context, target string, local netip.Addr) (ProbeResult, error) {
+	conn, err := overlayProbeSocket(netip.MustParseAddr(target), local)
+	if err != nil {
+		return ProbeResult{}, err
+	}
+	defer conn.Close()
+	return probeEcho(ctx, conn, target, time.Second, 1)
+}
+func probeEcho(ctx context.Context, conn net.PacketConn, target string, wait time.Duration, count int) (ProbeResult, error) {
 	result := ProbeResult{Address: target}
 	protocol, requestType, replyType := 1, icmp.Type(ipv4.ICMPTypeEcho), icmp.Type(ipv4.ICMPTypeEchoReply)
 	if netip.MustParseAddr(target).Is6() {
@@ -86,7 +136,7 @@ func probeEcho(ctx context.Context, conn net.PacketConn, target string, wait tim
 	}
 	var total time.Duration
 	buffer := make([]byte, 1500)
-	for sequence := 1; sequence <= 3; sequence++ {
+	for sequence := 1; sequence <= count; sequence++ {
 		if ctx.Err() != nil {
 			break
 		}
