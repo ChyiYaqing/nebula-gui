@@ -44,6 +44,15 @@ final class ProtocolTests: XCTestCase {
             let status = try await client.send(BackendRequest(method: "status"), as: ConnectionStatus.self)
             XCTAssertEqual(status.state, "disconnected")
             XCTAssertFalse(status.isStarted)
+            // Latency sampling must decode in the real backend: a protocol error would stop it.
+            do {
+                _ = try await client.send(BackendRequest(method: "sample", addresses: ["192.0.2.5"]), as: LatencyBatch.self)
+                XCTFail("sampled without a connection")
+            } catch let problem as BackendProblem {
+                XCTAssertEqual(problem.code, "not_connected")
+            }
+            let afterSample = try await client.send(BackendRequest(method: "status"), as: ConnectionStatus.self)
+            XCTAssertEqual(afterSample.state, "disconnected")
             try await client.shutdown()
             // No sleep: shutdown must wait until the store lock has been released.
             let reloaded = try await client.send(BackendRequest(method: "list"), as: [NetworkProfile].self)

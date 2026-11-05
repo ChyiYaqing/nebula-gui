@@ -36,7 +36,7 @@ final class LatencyTests: XCTestCase {
         var history = try self.history((0..<(LatencyHistory.capacity + 5)).map { Double($0) })
         XCTAssertEqual(history.points["192.0.2.5"]?.count, LatencyHistory.capacity)
         XCTAssertEqual(history.points["192.0.2.5"]?.first?.replyMS, 5)
-        history.record(try batch([], unmeasured: ["192.0.2.5", "192.0.2.6"]), at: origin)
+        history.record(try batch([], unmeasured: ["192.0.2.5", "192.0.2.6"]), at: origin.addingTimeInterval(Double(LatencyHistory.capacity + 5) * 5))
         XCTAssertEqual(history.points["192.0.2.5"]?.count, LatencyHistory.capacity)
         XCTAssertNil(history.points["192.0.2.6"])
         history.retain([])
@@ -63,5 +63,34 @@ final class LatencyTests: XCTestCase {
         let many = (0..<100).map { #"{"name":"n","addresses":["10.0.\#($0 / 200).\#($0 % 200)"],"pending":false}"# }
         let large = try JSONDecoder().decode([KnownPeer].self, from: Data("[\(many.joined(separator: ","))]".utf8))
         XCTAssertEqual(LatencyHistory.targets(large).count, LatencyHistory.maxTargets)
+    }
+
+    func testUnmeasuredRoundIsNotCurrentLatency() throws {
+        var history = LatencyHistory()
+        history.record(try batch([("192.0.2.5", 10), ("192.0.2.6", 20)]), at: origin)
+        history.record(try batch([("192.0.2.5", 12)], unmeasured: ["192.0.2.6"]), at: origin.addingTimeInterval(5))
+        XCTAssertEqual(history.unmeasured, 1)
+        XCTAssertEqual(history.stats(for: "192.0.2.6")?.current, false)
+        XCTAssertEqual(history.stats(for: "192.0.2.5")?.current, true)
+        XCTAssertEqual(history.medianLatestMS, 12)      // the old 20 ms is not current latency
+        XCTAssertEqual(history.count(.stable), 1)        // nor counted as stable
+        XCTAssertEqual(history.currentCount, 1)
+        XCTAssertEqual(history.stats(for: "192.0.2.6")?.lossPercent, 0) // nor as loss
+    }
+    func testPointsExpireAfterTheWindow() throws {
+        var history = LatencyHistory()
+        history.record(try batch([("192.0.2.5", 10), ("192.0.2.6", 20)]), at: origin)
+        history.record(try batch([("192.0.2.5", 12)]), at: origin.addingTimeInterval(LatencyHistory.window + 5))
+        XCTAssertEqual(history.points["192.0.2.5"]?.map(\.replyMS), [12])
+        XCTAssertNil(history.points["192.0.2.6"])
+        history.expire(before: origin.addingTimeInterval(LatencyHistory.window * 3))
+        XCTAssertTrue(history.points.isEmpty)
+        XCTAssertNil(history.lastRound)
+        XCTAssertNil(history.medianLatestMS)
+    }
+    func testRecentInstabilityIsNotHiddenByOlderHistory() throws {
+        let calm = Array(repeating: Double?(50), count: LatencyHistory.capacity - LatencyHistory.recentWindow)
+        let swinging = (0..<LatencyHistory.recentWindow).map { Double?($0.isMultiple(of: 2) ? 10 : 90) }
+        XCTAssertEqual(try history(calm + swinging).stats(for: "192.0.2.5")?.health, .unstable)
     }
 }

@@ -484,7 +484,7 @@ extension AppModel {
         guard !shuttingDown, !sleeping, !busy, status.isStarted, let session = latencySessionKey else { return }
         if latencySession != session { latency = LatencyHistory(); latencySession = session; latencyNote = nil }
         let targets = LatencyHistory.targets(status.peers)
-        latency.retain(Set(targets))
+        latency.retain(Set(targets)); latency.expire(before: now().addingTimeInterval(-LatencyHistory.window))
         guard !targets.isEmpty else { return }
         let generation = recovery.generation
         do {

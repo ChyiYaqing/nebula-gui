@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -116,6 +117,28 @@ func TestLatencySampleSharesOneShortDeadline(t *testing.T) {
 	for _, sample := range batch.Samples {
 		if !sample.Measured || sample.ReplyMS != nil {
 			t.Fatal("silent node must be a measured loss", sample)
+		}
+	}
+}
+
+// The GUI reaches Handle only through DecodeRequest; a field missing from its allowlist
+// is a protocol error that makes the GUI stop the backend.
+func TestLatencySampleRequestDecodes(t *testing.T) {
+	r, err := DecodeRequest([]byte(`{"version":1,"id":"s","method":"sample","addresses":["10.73.0.3","10.73.0.4"]}`))
+	if err != nil || r.Method != "sample" || len(r.Addresses) != 2 {
+		t.Fatal(r, err)
+	}
+	many := make([]string, maxSampleTargets+1)
+	for i := range many {
+		many[i] = fmt.Sprintf(`"10.73.0.%d"`, i+3)
+	}
+	for _, payload := range []string{
+		`{"version":1,"id":"s","method":"sample","addresses":[` + strings.Join(many, ",") + `]}`,
+		`{"version":1,"id":"s","method":"sample","addresses":["` + strings.Repeat("1", 65) + `"]}`,
+		`{"version":1,"id":"s","method":"sample","addresses":"10.73.0.3"}`,
+	} {
+		if _, err := DecodeRequest([]byte(payload)); err == nil {
+			t.Fatal("accepted", payload[:60])
 		}
 	}
 }

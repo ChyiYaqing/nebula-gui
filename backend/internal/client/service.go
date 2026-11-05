@@ -315,13 +315,21 @@ func DecodeRequest(b []byte) (Request, error) {
 	}
 	for k := range fields {
 		switch k {
-		case "version", "id", "method", "path", "profileID", "name", "digest", "files", "address":
+		case "version", "id", "method", "path", "profileID", "name", "digest", "files", "address", "addresses":
 		default:
 			return r, problem("invalid_request", "请求包含未知字段。", "")
 		}
 	}
 	if json.Unmarshal(b, &r) != nil || len(r.ID) > 80 || len(r.Path) > 4096 || len(r.Name) > 160 || len(r.Files) > 3 || len(r.Address) > 64 {
 		return r, problem("invalid_request", "请求字段无效或过长。", "")
+	}
+	if len(r.Addresses) > maxSampleTargets {
+		return r, problem("invalid_request", "监测地址数量超出范围。", "")
+	}
+	for _, address := range r.Addresses {
+		if len(address) > 64 {
+			return r, problem("invalid_request", "请求字段无效或过长。", "")
+		}
 	}
 	for k, v := range r.Files {
 		if (k != "ca" && k != "cert" && k != "key") || len(v) > 4096 {

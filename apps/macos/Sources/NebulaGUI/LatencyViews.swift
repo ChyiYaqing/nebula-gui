@@ -107,7 +107,7 @@ struct LatencySummaryCard: View {
     let history: LatencyHistory
     let targets: Int
     let note: String?
-    private var measured: Int { history.points.count }
+    private var measured: Int { history.currentCount }
     private var worst: LatencyHealth? {
         [LatencyHealth.silent, .lossy, .unstable, .stable].first { history.count($0) > 0 }
     }
@@ -152,8 +152,11 @@ struct LatencySummaryCard: View {
                     }
                 }
             }
-            Text(note ?? "每 5 秒向每个活动隧道发 1 个 ICMP 请求，只统计本次连接的最近 5 分钟。未回复可能是节点禁止 ICMP，不代表远端离线；待握手节点不探测。")
-                .font(.caption).foregroundStyle(note == nil ? Color.secondary : Color.orange)
+            if let warning = note ?? (history.unmeasured > 0 ? "本轮有 \(history.unmeasured) 个地址未能测量，未计入统计，也不算丢包。" : nil) {
+                Text(warning).font(.caption).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
+            }
+            Text("每 5 秒向每个活动隧道发 1 个 ICMP 请求，只统计本次连接的最近 5 分钟。未回复可能是节点禁止 ICMP，不代表远端离线；待握手节点不探测。")
+                .font(.caption).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
@@ -166,13 +169,13 @@ struct LatencyBadge: View {
     var body: some View {
         HStack(spacing: 8) {
             Sparkline(values: points.map(\.replyMS), tint: stats.health.tint).frame(width: 72, height: 22)
-            Text(stats.latest == nil ? "无回复" : latencyText(stats.latest) + " ms")
+            Text(!stats.current ? "未测量" : stats.latest == nil ? "无回复" : latencyText(stats.latest) + " ms")
                 .font(.caption.weight(.medium)).monospacedDigit()
-                .foregroundStyle(stats.latest == nil ? Color.orange : Color.primary)
+                .foregroundStyle(!stats.current ? Color.secondary : stats.latest == nil ? Color.orange : Color.primary)
                 .frame(minWidth: 52, alignment: .trailing)
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(stats.latest == nil ? "最近一次未回复，\(stats.health.title)" : "延迟 \(latencyText(stats.latest)) 毫秒，\(stats.health.title)")
+        .accessibilityLabel(!stats.current ? "本轮未能测量" : stats.latest == nil ? "最近一次未回复，\(stats.health.title)" : "延迟 \(latencyText(stats.latest)) 毫秒，\(stats.health.title)")
     }
 }
 
