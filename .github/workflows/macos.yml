@@ -1,0 +1,64 @@
+name: macOS PR checks
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: macos-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  macos:
+    name: macOS build and tests
+    runs-on: macos-15
+    timeout-minutes: 25
+    defaults:
+      run:
+        shell: bash
+        working-directory: nebula-gui
+    env:
+      GOTOOLCHAIN: local
+      GOWORK: off
+      NEBULA_GUI_APP_OUTPUT: ${{ github.workspace }}/nebula-gui/build/CI/Nebula.app
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          path: nebula-gui
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: nebula-gui/backend/go.mod
+          cache: false
+      - name: Record toolchain
+        run: |
+          sw_vers
+          uname -m
+          xcodebuild -version
+          swift --version
+          go version
+      - name: Fetch reviewed kernel
+        run: bash scripts/prepare-kernel.sh
+      - name: Build and test
+        run: bash scripts/test.sh
+      - name: Isolated native UI previews
+        run: |
+          bash scripts/preview-ui.sh --build-only
+          .build/bin/nebula-ui-preview --verify-isolation
+          .build/bin/nebula-ui-preview --scenario empty --width 760 --snapshot build/CI/empty.png
+          .build/bin/nebula-ui-preview --scenario connected --page nodes --width 760 --snapshot build/CI/nodes.png
+          .build/bin/nebula-ui-preview --scenario unavailable --menu --appearance dark --snapshot build/CI/menu-dark.png
+      - name: Go vet
+        working-directory: nebula-gui/backend
+        run: go vet ./...
+      - name: Whitespace check
+        env:
+          CHECK_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          if [[ "$CHECK_BASE" =~ ^[0-9a-f]{40}$ ]] && [[ "$CHECK_BASE" != 0000000000000000000000000000000000000000 ]]; then
+            git diff --check "$CHECK_BASE" HEAD
+          else
+            git show --check --oneline HEAD
+          fi

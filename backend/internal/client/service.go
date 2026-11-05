@@ -30,6 +30,13 @@ func stopEngine(e Engine) error {
 	e.Stop()
 	return nil
 }
+func (s *Service) prune() {
+	if err := s.store.Prune(s.active); err != nil {
+		if len(s.events) == 0 || s.events[len(s.events)-1].Code != "profile_cleanup_pending" {
+			s.event("profile_cleanup_pending")
+		}
+	}
+}
 func (s *Service) event(code string) {
 	s.events = append(s.events, Event{time.Now().UTC(), code})
 	if len(s.events) > 100 {
@@ -90,6 +97,7 @@ func (s *Service) invoke(r Request) (any, error) {
 	case "events":
 		return append([]Event{}, s.events...), nil
 	case "list":
+		s.prune()
 		return s.store.List()
 	case "rename":
 		profile, err := s.store.Rename(r.ProfileID, r.Name)
@@ -122,6 +130,7 @@ func (s *Service) invoke(r Request) (any, error) {
 		p, err := s.store.Save(c, r.ProfileID)
 		if err == nil {
 			s.event("profile_imported")
+			s.prune()
 		}
 		return p, err
 	case "remove", "rollback":
@@ -188,6 +197,7 @@ func (s *Service) invoke(r Request) (any, error) {
 		s.startedAt = nil
 		s.failure = nil
 		s.event("tunnel_stopped")
+		s.prune()
 		return s.status(), nil
 	case "probe":
 		state := s.status()
@@ -229,6 +239,7 @@ func (s *Service) invoke(r Request) (any, error) {
 		s.startedAt = nil
 		s.failure = nil
 		s.event("cleanup_confirmed")
+		s.prune()
 		return s.status(), nil
 	case "rebind":
 		if s.status().State != "started" {

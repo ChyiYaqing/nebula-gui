@@ -98,6 +98,7 @@ public struct ConnectionEvent: Decodable, Sendable, Identifiable {
         case "tunnel_started": return "隧道已启动"
         case "tunnel_stopped": return "已断开连接"
         case "profile_imported": return "配置已保存"
+        case "profile_cleanup_pending": return "配置副本清理待重试"
         case "profile_renamed": return "网络显示名称已更新"
         case "backend_stopped": return "连接后台已停止"
         case "cleanup_incomplete": return "隧道清理未确认"
