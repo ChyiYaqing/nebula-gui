@@ -21,8 +21,14 @@ extension BackendClient: AppBackend {}
     @Published var connectionBusy = false
     @Published var automaticRecovery = true { didSet { recovery.setEnabled(automaticRecovery); recoveryTask?.cancel(); recoveryTask = nil; evaluateRecovery() } }
     @Published var probeAddress = ""
-    @Published var probeResult: NodeProbeResult?
-    @Published var probeBusy = false
+    /// The last node test of this app session, bound to the connection that started it.
+    @Published var probe: NodeProbe?
+    var probeBusy: Bool { probe?.running == true }
+    /// A finished test is shown only while its connection session is still the observed one.
+    var currentProbe: NodeProbe? {
+        guard let probe, status.isStarted, status.profileID == probe.profileID, status.startedAt == probe.startedAt else { return nil }
+        return probe
+    }
     @Published var notificationsBusy = false
     @Published var notificationsEnabled = false
     @Published var notificationText = "到期提醒未开启"
@@ -197,7 +203,7 @@ extension BackendClient: AppBackend {}
         guard let selected else { return }
         recoveryTask?.cancel(); recoveryTask = nil
         let generation = recovery.userConnect(selected.id)
-        busy = true; connectionBusy = true; problem = nil; probeResult = nil
+        busy = true; connectionBusy = true; problem = nil; probe = nil
         defer { if generation == recovery.generation { busy = false; connectionBusy = false; evaluateRecovery() } }
         do {
             if status.state == "failed", transientCodes.contains(status.error?.code ?? "") {
@@ -228,7 +234,7 @@ extension BackendClient: AppBackend {}
         do {
             let disconnected = try await client.send(BackendRequest(method: "disconnect"), as: ConnectionStatus.self)
             guard generation == recovery.generation else { return }
-            status = disconnected; problem = nil; probeResult = nil
+            status = disconnected; problem = nil; probe = nil
         } catch {
             guard generation == recovery.generation else { return }
             setProblem(error)
@@ -343,6 +349,17 @@ extension BackendClient: AppBackend {}
     }
 }
 
+struct NodeProbe: Identifiable {
+    let id = UUID()
+    let address: String
+    let profileID: String
+    let startedAt: String?
+    let generation: UInt64
+    var result: NodeProbeResult?
+    var problem: BackendProblem?
+    var running: Bool { result == nil && problem == nil }
+}
+
 extension AppModel {
     private var transientCodes: [String] { ["backend_stopped", "backend_unavailable", "cleanup_incomplete", "cleanup_pending", "authorization_required", "rebind_failed"] }
     private func evaluateRecovery() {
@@ -416,16 +433,23 @@ extension AppModel {
             }
         }
     }
-    func testNode() async {
-        guard !probeBusy, !busy, status.isStarted, !shuttingDown else { return }
-        probeBusy = true; probeResult = nil
-        let generation = recovery.generation
-        defer { probeBusy = false }
+    /// Tests `target`, or the manual address. Only the started, selected network can be probed.
+    func testNode(_ target: String? = nil) async {
+        let address = (target ?? probeAddress).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !probeBusy, !busy, !shuttingDown, !address.isEmpty, isCurrentStarted, let profileID = status.profileID else { return }
+        let started = NodeProbe(address: address, profileID: profileID, startedAt: status.startedAt, generation: recovery.generation)
+        probe = started
+        var outcome = started
         do {
-            let result = try await client.send(BackendRequest(method: "probe", address: probeAddress.trimmingCharacters(in: .whitespacesAndNewlines)), as: NodeProbeResult.self)
-            guard generation == recovery.generation, status.isStarted, !shuttingDown else { return }
-            probeResult = result; problem = nil
-        } catch { if generation == recovery.generation { setProblem(error) } }
+            outcome.result = try await client.send(BackendRequest(method: "probe", address: address), as: NodeProbeResult.self)
+        } catch {
+            // Local feedback only: a probe error must not replace an unrelated connection problem.
+            outcome.problem = error as? BackendProblem ?? BackendProblem(code: "operation_failed", message: "测试未完成，请重试。")
+        }
+        guard probe?.id == started.id else { return }
+        let sameSession = !shuttingDown && started.generation == recovery.generation && status.isStarted
+            && status.profileID == started.profileID && status.startedAt == started.startedAt
+        probe = sameSession ? outcome : nil
     }
     func setNotifications(_ enabled: Bool) async {
         guard !notificationsBusy, !shuttingDown else { return }
