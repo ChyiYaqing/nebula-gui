@@ -13,40 +13,62 @@ import Foundation
     private let delivery: any ReminderDelivery
     private var generation: UInt64 = 0
     private var enabled = false
-    private var desired: Set<String> = []
+    private var latestPlan: [CertificateReminder] = []
+    private var latestObservation = Date.distantPast
+    private var synchronizing = false
     public private(set) var history: [String: Double]
     public private(set) var permissionAllowed = false
     public init(delivery: any ReminderDelivery, history: [String: Double] = [:]) {
         self.delivery = delivery; self.history = history
     }
+    /// Coalesces updates while one system operation is in flight. The active
+    /// caller drains the latest plan before returning; newer callers enqueue it.
     public func synchronize(_ reminders: [CertificateReminder], enabled: Bool, now: Date) async throws {
         generation &+= 1
-        let token = generation
-        self.enabled = enabled
-        desired = enabled ? Set(reminders.map(\.id)) : []
-        if enabled {
-            let allowed = await delivery.authorized()
-            guard token == generation else { return }
-            permissionAllowed = allowed
-            if !allowed { return }
+        self.enabled = enabled; latestPlan = reminders; latestObservation = now
+        guard !synchronizing else { return }
+        synchronizing = true
+        defer { synchronizing = false }
+        while true {
+            let token = generation
+            do { try await reconcile(latestPlan, enabled: self.enabled, now: latestObservation, token: token) }
+            catch { if token == generation { throw error } }
+            if token == generation { return }
         }
+    }
+    private func reconcile(_ reminders: [CertificateReminder], enabled: Bool, now: Date, token: UInt64) async throws {
+        let relevant = Set(reminders.map(\.id))
+        history = history.filter { relevant.contains($0.key) }
+        let allowed = enabled ? await delivery.authorized() : false
+        guard token == generation else { return }
+        permissionAllowed = allowed
         let pending = Set(await delivery.pendingIdentifiers().filter { $0.hasPrefix(CertificateReminders.identifierPrefix) })
         guard token == generation else { return }
-        delivery.remove(pending.subtracting(desired).sorted())
-        if !enabled {
-            for id in pending { history.removeValue(forKey: id) }
+        // Filter consumed thresholds before applying the pending queue limit.
+        let selected = enabled && allowed ? Array(reminders.filter {
+            pending.contains($0.id) || (history[$0.id].map { $0 > now.timeIntervalSince1970 } ?? true)
+        }.prefix(60)) : []
+        let desired = Set(selected.map(\.id))
+        let withdrawn = pending.subtracting(desired)
+        delivery.remove(withdrawn.sorted())
+        for id in withdrawn { history.removeValue(forKey: id) }
+        if !enabled || !allowed {
+            history = history.filter { $0.value <= now.timeIntervalSince1970 }
             return
         }
-        for reminder in reminders where !pending.contains(reminder.id) {
-            guard token == generation, self.enabled else { return }
-            if let previous = history[reminder.id], previous <= now.timeIntervalSince1970 { continue }
+        for reminder in selected where !pending.contains(reminder.id) {
+            guard token == generation else { return }
             try await delivery.add(reminder, now: now)
-            guard token == generation, self.enabled else {
-                if !self.enabled || !desired.contains(reminder.id) { delivery.remove([reminder.id]) }
+            guard token == generation else {
+                // No newer add can be in flight: this worker owns system calls.
+                // Withdraw the stale result, then drain the latest plan afresh.
+                delivery.remove([reminder.id])
+                history.removeValue(forKey: reminder.id)
                 return
             }
             history[reminder.id] = reminder.fireAt.timeIntervalSince1970
         }
-        history = Dictionary(uniqueKeysWithValues: history.sorted { $0.value > $1.value }.prefix(256).map { ($0.key, $0.value) })
+        // Bounded by the current plan (at most four IDs per current certificate).
+        history = history.filter { relevant.contains($0.key) }
     }
 }
