@@ -3,6 +3,15 @@ import SwiftUI
 import UniformTypeIdentifiers
 import NebulaClient
 
+/// Only the operations used by the model; production transport retains its own serial queue.
+@MainActor protocol AppBackend {
+    func send<T: Decodable & Sendable>(_ request: BackendRequest, as type: T.Type) async throws -> T
+    func recover() async throws -> ConnectionStatus
+    func shutdown(permanently: Bool) async throws
+    func completeAuthorizedRemoval() async throws
+}
+extension BackendClient: AppBackend {}
+
 @MainActor final class AppModel: ObservableObject {
     @Published var authorization = AuthorizationState.missing
     @Published var showAuthorizationReview = false
@@ -44,17 +53,34 @@ import NebulaClient
     private var authorizationInProgress = false
     private var files: [String: String] = [:]
     private var timer: Timer?
-    private let client: BackendClient
+    private let client: any AppBackend
+    private let now: () -> Date
+    private let wait: (TimeInterval) async throws -> Void
+    private var servicesEnabled = false
     var selected: NetworkProfile? { profiles.first { $0.id == selectedID } }
     var active: NetworkProfile? { profiles.first { $0.id == status.profileID } }
     var isCurrentStarted: Bool { status.isStarted && status.profileID == selectedID }
+    var connectionActionTitle: String {
+        isCurrentStarted ? "断开连接" : !authorization.available ? "启用连接后台" : status.isStarted ? "切换并连接" : "连接网络"
+    }
+    var menuActionTitle: String {
+        status.isStarted ? "断开连接" : !authorization.available ? "启用连接后台" : "连接所选网络"
+    }
     var statusText: String {
         if busy { return "正在处理" }
         if status.isStarted { return "隧道已启动" }
         if status.state == "failed" { return "连接未完成" }
         return profiles.isEmpty ? "等待导入" : "未连接"
     }
-    init() {
+    /// Isolated model: no polling, environment observers, notifications or transport startup.
+    init(client: any AppBackend, now: @escaping () -> Date = Date.init,
+         wait: @escaping (TimeInterval) async throws -> Void = { seconds in
+             try await Task.sleep(nanoseconds: UInt64(max(0, seconds) * 1_000_000_000))
+         }) {
+        self.client = client; self.now = now; self.wait = wait
+        notificationsAllowed = false
+    }
+    convenience init() {
         let arguments = CommandLine.arguments
         func argument(_ key: String) -> String? {
             guard let index = arguments.firstIndex(of: key), index + 1 < arguments.count else { return nil }
@@ -64,7 +90,8 @@ import NebulaClient
         let store = argument("--data-dir").map { URL(fileURLWithPath: $0) }
             ?? support.appendingPathComponent("NebulaGUI", isDirectory: true)
         let executable = Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/nebula-gui-backend")
-        client = BackendClient(executable: executable, store: store)
+        self.init(client: BackendClient(executable: executable, store: store))
+        servicesEnabled = true
         notificationsAllowed = argument("--data-dir") == nil
         notificationsEnabled = certificateNotifications.enabled
         notificationText = notificationsEnabled ? "已开启 30／7／1 天及到期提醒" : "到期提醒未开启"
@@ -76,6 +103,7 @@ import NebulaClient
         startPolling()
     }
     private func startPolling() {
+        guard servicesEnabled else { return }
         timer?.invalidate()
         timer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in
             Task { @MainActor in guard let self, !self.busy, !self.shuttingDown, !self.sleeping else { return }; await self.refreshStatus() }
@@ -162,8 +190,8 @@ import NebulaClient
     }
     func connectSelected() async {
         guard !busy, !shuttingDown else { return }
-        if !authorization.available { upgradingAuthorization = false; showAuthorizationReview = true; return }
         if isCurrentStarted { await disconnect(); return }
+        if !authorization.available { upgradingAuthorization = false; showAuthorizationReview = true; return }
         guard let selected else { return }
         recoveryTask?.cancel(); recoveryTask = nil
         let generation = recovery.userConnect(selected.id)
@@ -181,7 +209,7 @@ import NebulaClient
             }
             let connected = try await client.send(BackendRequest(method: "connect", profileID: selected.id), as: ConnectionStatus.self)
             guard generation == recovery.generation, !shuttingDown else { return }
-            status = connected; recovery.observedStarted(at: Date())
+            status = connected; recovery.observedStarted(at: now())
         } catch {
             guard generation == recovery.generation, !shuttingDown else { return }
             setProblem(error)
@@ -318,14 +346,14 @@ extension AppModel {
     private func evaluateRecovery() {
         guard !shuttingDown else { return }
         if status.isStarted {
-            recovery.observedStarted(at: Date()); recoveryText = ""; return
+            recovery.observedStarted(at: now()); recoveryText = ""; return
         }
         guard recovery.desiredProfileID != nil, automaticRecovery else { recoveryText = ""; return }
         if sleeping { recoveryText = "电脑睡眠期间暂停恢复"; return }
         if !networkAvailable { recoveryText = "系统网络不可用，恢复已暂停"; return }
         guard !busy, !shuttingDown else { return }
         let code = status.error?.code ?? problem?.code ?? "backend_stopped"
-        guard let retry = recovery.schedule(code: code, at: Date()) else {
+        guard let retry = recovery.schedule(code: code, at: now()) else {
             recoveryText = recovery.attempts >= 5 ? "自动恢复已暂停，请手动重新连接" : "请处理提示后手动重新连接"
             return
         }
@@ -333,14 +361,15 @@ extension AppModel {
         guard recoveryTask == nil else { return }
         let scheduledGeneration = recovery.generation
         recoveryTask = Task { [weak self] in
-            let delay = max(0, retry.timeIntervalSinceNow)
-            do { try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000)) } catch { return }
-            guard let self, !Task.isCancelled, self.recovery.generation == scheduledGeneration else { return }
+            guard let self else { return }
+            let delay = max(0, retry.timeIntervalSince(self.now()))
+            do { try await self.wait(delay) } catch { return }
+            guard !Task.isCancelled, self.recovery.generation == scheduledGeneration else { return }
             await self.attemptRecovery()
         }
     }
     private func attemptRecovery() async {
-        guard !busy, !shuttingDown, let attempt = recovery.beginAttempt(at: Date()) else { recoveryTask = nil; return }
+        guard !busy, !shuttingDown, let attempt = recovery.beginAttempt(at: now()) else { recoveryTask = nil; return }
         busy = true; connectionBusy = true; recoveryText = "正在恢复连接，第 \(attempt.number)／5 次"
         defer {
             if attempt.generation == recovery.generation { recoveryTask = nil; busy = false; connectionBusy = false; evaluateRecovery() }
@@ -351,14 +380,14 @@ extension AppModel {
             status = cleared
             let connected = try await client.send(BackendRequest(method: "connect", profileID: attempt.profileID), as: ConnectionStatus.self)
             guard recovery.accepts(attempt), !shuttingDown else { return }
-            status = connected; problem = nil; recovery.observedStarted(at: Date())
+            status = connected; problem = nil; recovery.observedStarted(at: now())
         } catch {
             guard recovery.accepts(attempt), !shuttingDown else { return }
             setProblem(error)
             status = ConnectionStatus(state: "failed", profileID: status.profileID, error: problem, peers: [])
         }
     }
-    private func environmentChanged(_ event: ConnectionEnvironment.Event) {
+    func environmentChanged(_ event: ConnectionEnvironment.Event) {
         guard !shuttingDown else { return }
         switch event {
         case .sleep: sleeping = true; timer?.invalidate()
@@ -369,8 +398,9 @@ extension AppModel {
         recoveryTask?.cancel(); recoveryTask = nil; networkTask?.cancel()
         if sleeping || !networkAvailable { evaluateRecovery(); return }
         networkTask = Task { [weak self] in
-            do { try await Task.sleep(nanoseconds: 1_500_000_000) } catch { return }
-            guard let self, !self.shuttingDown, !self.busy else { return }
+            guard let self else { return }
+            do { try await self.wait(1.5) } catch { return }
+            guard !Task.isCancelled, !self.shuttingDown, !self.busy else { return }
             await self.refreshStatus()
             guard self.status.isStarted, self.authorization.supportsRecovery, !self.busy, !self.shuttingDown else { return }
             let generation = self.recovery.generation
