@@ -190,7 +190,37 @@ func atomicJSON(path string, v any) error {
 	if e = f.Close(); e != nil {
 		return e
 	}
-	return os.Rename(f.Name(), path)
+	if e = os.Rename(f.Name(), path); e != nil {
+		return e
+	}
+	return syncDirectory(filepath.Dir(path))
+}
+
+// syncDirectory makes new entries and renames in dir durable before a later step
+// depends on them, such as publishing an index or pruning an older version.
+func syncDirectory(dir string) error {
+	f, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	return f.Sync()
+}
+
+func writeSynced(path string, data []byte) error {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL|unix.O_NOFOLLOW, 0600)
+	if err != nil {
+		return err
+	}
+	if _, err = f.Write(data); err != nil {
+		f.Close()
+		return err
+	}
+	if err = f.Sync(); err != nil {
+		f.Close()
+		return err
+	}
+	return f.Close()
 }
 func (s *Store) Save(c *Candidate, replace string) (Profile, error) {
 	p := c.Profile
@@ -231,10 +261,14 @@ func (s *Store) Save(c *Candidate, replace string) (Profile, error) {
 			os.RemoveAll(dir)
 		}
 	}()
-	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), c.Config, 0600); err != nil {
+	if err := writeSynced(filepath.Join(dir, "config.yaml"), c.Config); err != nil {
 		return Profile{}, err
 	}
 	if err := atomicJSON(filepath.Join(dir, "profile.json"), p); err != nil {
+		return Profile{}, err
+	}
+	// The version directory must be durable before the index can point at it.
+	if err := syncDirectory(base); err != nil {
 		return Profile{}, err
 	}
 	if err := atomicJSON(filepath.Join(s.root, "profiles", p.ID+".json"), pointer{Version: p.Version, Previous: previous, DisplayName: p.Name}); err != nil {
@@ -288,6 +322,11 @@ func (s *Store) Remove(id string) error {
 		return err
 	}
 	pending := problem("profile_cleanup_pending", "\u914d\u7f6e\u5df2\u79fb\u9664\uff0c\u4f46\u53d7\u7ba1\u526f\u672c\u6e05\u7406\u5c1a\u672a\u5b8c\u6210\uff1b\u5237\u65b0\u65f6\u5c06\u91cd\u8bd5\u3002", "")
+	// Files are deleted only after the marker is durable; otherwise a crash could
+	// restore an index that points at removed versions. Refresh retries the cleanup.
+	if err := syncDirectory(filepath.Join(s.root, "profiles")); err != nil {
+		return pending
+	}
 	if err := s.pruneProfile(id, true); err != nil {
 		return pending
 	}

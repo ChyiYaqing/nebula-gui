@@ -41,7 +41,10 @@ extension BackendClient: AppBackend {}
     private var networkAvailable = true
     private var shuttingDown = false
     private var notificationsAllowed = true
-    private lazy var certificateNotifications = CertificateNotifications(allowDelivery: notificationsAllowed)
+    private var injectedNotifications: CertificateNotifications?
+    private lazy var certificateNotifications = injectedNotifications ?? CertificateNotifications(allowDelivery: notificationsAllowed)
+    /// Reminder plans derive from the network list; an empty list before the first load is unknown, not empty.
+    private var profilesLoaded = false
     var canCancelConnection: Bool { connectionBusy || (recovery.desiredProfileID != nil && !recoveryText.isEmpty) }
     /// The network that automatic recovery targets; status.profileID may already be cleared.
     var recoveryProfileID: String? { recovery.desiredProfileID }
@@ -65,6 +68,8 @@ extension BackendClient: AppBackend {}
     private let now: () -> Date
     private let wait: (TimeInterval) async throws -> Void
     private var servicesEnabled = false
+    private var foregroundObserver: NSObjectProtocol?
+    private var lastNotificationSync = Date.distantPast
     var selected: NetworkProfile? { profiles.first { $0.id == selectedID } }
     var active: NetworkProfile? { profiles.first { $0.id == status.profileID } }
     var isCurrentStarted: Bool { status.isStarted && status.profileID == selectedID }
@@ -86,9 +91,9 @@ extension BackendClient: AppBackend {}
     init(client: any AppBackend, now: @escaping () -> Date = Date.init,
          wait: @escaping (TimeInterval) async throws -> Void = { seconds in
              try await Task.sleep(nanoseconds: UInt64(max(0, seconds) * 1_000_000_000))
-         }) {
+         }, notifications: CertificateNotifications? = nil) {
         self.client = client; self.now = now; self.wait = wait
-        notificationsAllowed = false
+        notificationsAllowed = false; injectedNotifications = notifications
     }
     convenience init() {
         let arguments = CommandLine.arguments
@@ -110,13 +115,20 @@ extension BackendClient: AppBackend {}
             await refresh()
             if let path = argument("--import") { await preview(path: path) }
         }
+        foregroundObserver = NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor in await self?.refreshNotifications() }
+        }
         startPolling()
     }
     private func startPolling() {
         guard servicesEnabled else { return }
         timer?.invalidate()
         timer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in
-            Task { @MainActor in guard let self, !self.busy, !self.shuttingDown, !self.sleeping else { return }; await self.refreshStatus() }
+            Task { @MainActor in
+                guard let self, !self.busy, !self.shuttingDown, !self.sleeping else { return }
+                await self.refreshStatus()
+                if Date().timeIntervalSince(self.lastNotificationSync) >= 300 { await self.refreshNotifications() }
+            }
         }
     }
     func refresh() async {
@@ -124,12 +136,11 @@ extension BackendClient: AppBackend {}
         do {
             let listed = try await client.send(BackendRequest(method: "list"), as: [NetworkProfile].self)
             guard !shuttingDown else { return }
-            profiles = listed
+            profiles = listed; profilesLoaded = true
             if !profiles.contains(where: { $0.id == selectedID }) { selectedID = profiles.first?.id }
             await refreshStatus()
             guard !shuttingDown else { return }
-            try await certificateNotifications.synchronize(profiles)
-            if notificationsEnabled { notificationText = certificateNotifications.permissionAllowed ? "已开启 30／7／1 天及到期提醒" : "系统未允许通知，仍可在 App 内查看有效期" }
+            await refreshNotifications()
         } catch { setProblem(error) }
     }
     func refreshStatus() async {
@@ -343,7 +354,11 @@ extension BackendClient: AppBackend {}
         shuttingDown = true
         recovery.userDisconnect(); recoveryTask?.cancel(); recoveryTask = nil; networkTask?.cancel(); recoveryText = ""
         timer?.invalidate()
-        do { try await client.shutdown(permanently: true); environmentMonitor?.stop(); return true }
+        do {
+            try await client.shutdown(permanently: true); environmentMonitor?.stop()
+            if let foregroundObserver { NotificationCenter.default.removeObserver(foregroundObserver); self.foregroundObserver = nil }
+            return true
+        }
         catch { shuttingDown = false; busy = false; connectionBusy = false; setProblem(error); startPolling(); return false }
     }
     func setProblem(_ error: Error) {
@@ -453,6 +468,28 @@ extension AppModel {
             && status.profileID == started.profileID && status.startedAt == started.startedAt
         probe = sameSession ? outcome : nil
     }
+    /// Background reconciliation: retried every 5 minutes even on failure, reported locally
+    /// so it never replaces an unrelated connection problem.
+    func refreshNotifications() async {
+        guard !shuttingDown, profilesLoaded else { return }
+        lastNotificationSync = Date()
+        do {
+            try await certificateNotifications.synchronize(profiles)
+            guard !shuttingDown else { return }
+            notificationsEnabled = certificateNotifications.enabled
+            notificationText = !notificationsEnabled ? "到期提醒未开启" : certificateNotifications.permissionAllowed ? "已开启 30／7／1 天及到期提醒" : "系统未允许通知，请到系统设置允许 Nebula 通知"
+        } catch { if !shuttingDown { notificationText = "提醒补排未完成，将在 5 分钟内自动重试" } }
+    }
+    func sendTestNotification() async {
+        guard !notificationsBusy, !shuttingDown else { return }
+        notificationsBusy = true
+        defer { notificationsBusy = false }
+        do {
+            try await certificateNotifications.sendTest()
+            guard !shuttingDown else { return }
+            notificationText = "测试通知已提交，显示方式由系统通知设置决定"
+        } catch { if !shuttingDown { notificationText = notificationFailure(error) } }
+    }
     func setNotifications(_ enabled: Bool) async {
         guard !notificationsBusy, !shuttingDown else { return }
         notificationsBusy = true
@@ -461,10 +498,14 @@ extension AppModel {
             if enabled {
                 notificationsEnabled = try await certificateNotifications.enable()
                 notificationText = notificationsEnabled ? "已开启 30／7／1 天及到期提醒" : "系统未允许通知，仍可在 App 内查看有效期"
-                if notificationsEnabled { try await certificateNotifications.synchronize(profiles) }
+                if notificationsEnabled && profilesLoaded { try await certificateNotifications.synchronize(profiles) }
             } else {
                 await certificateNotifications.disable(); notificationsEnabled = false; notificationText = "到期提醒未开启"
             }
-        } catch { setProblem(error) }
+        } catch { if !shuttingDown { notificationText = notificationFailure(error) } }
+    }
+    /// Shown in the notification section only; the next refresh replaces it with the system state.
+    private func notificationFailure(_ error: Error) -> String {
+        (error as? BackendProblem)?.message ?? "通知操作未完成，请重试。"
     }
 }

@@ -14,6 +14,9 @@ enum AuthorizationRunner {
     func enable() async throws -> Bool {
         throw BackendProblem(code: "preview_only", message: "合成预览不修改系统通知或偏好设置。")
     }
+    func sendTest() async throws {
+        throw BackendProblem(code: "preview_only", message: "合成预览不发送系统通知。")
+    }
     func disable() async {}
     func synchronize(_ profiles: [NetworkProfile]) async throws {}
 }

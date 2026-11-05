@@ -223,6 +223,118 @@ Go race 全套、Go vet、44 个 Swift 用例（27 个客户端、17 个实际�
 
 `bash scripts/test.sh` 通过：Go race 全套、57 个 Swift 用例、4 项 AppKit 退出场景。`go vet`、`git diff --check` 和预览隔离检查也都通过。`failed-other`、`recovering-other`、`connected` 的菜单快照在浅色／深色下检查过，没有溢出，也没有后台请求。这些是合成预览，不算实机验收。
 
+## 2026-11-05 证书通知分支合并 main 与审查修正（PR #15 / Issue #7）
+
+把 main（截至 #27）合并进 `feat/7-notification-maintenance`，用普通合并，不改写历史。
+
+- `AppModel.swift` 由 rerere 套用旧集成分支记录的解法。逐行核对过：与 main 相比只增加了本分支的通知补排、前台观察和测试通知，#24／#25／#27 的恢复归属、节点测试会话隔离、菜单目标都完整保留。
+- `Views.swift` 采用 main 的分页结构，本分支的通知设置视图（开关、发送测试通知、打开系统设置、补排说明）迁到配置页，改用 DesignSystem 样式。
+- 预览替身补上了拒绝执行的 `sendTest()`，`--verify-isolation` 新增测试通知检查，确认不调用系统、不发后台请求。
+
+审查修正：
+- 后台通知核对（每 5 分钟及回到前台）失败时，原来会调用 `setProblem` 覆盖无关的连接错误，现在只在通知设置处提示。
+- 失败时原来不更新 `lastNotificationSync`，导致每 3 秒的状态轮询都重试，现在在发起核对时记录时间，失败后按 5 分钟间隔重试。
+- 隔离模型中通知同步是空操作，这两点没有单元测试覆盖，结论来自代码审查。
+
+验证：
+- `bash scripts/test.sh` 通过：Go race、33 个客户端与 30 个 GUI Swift 用例、4 项 AppKit 退出场景。`go vet`、`git diff --check` 也通过。
+- 预览隔离检查通过。配置页 760 宽浅色／深色截图没有溢出。
+- 真实系统通知显示，以及系统设置中撤销／恢复权限的实机验证仍需用户操作，本 PR 继续保持 Draft。
+
+## 2026-11-05 关闭主窗口后从 Dock 重新打开（Issue #28）
+
+在 #4 的实机验收 A01 中发现：关闭主窗口后，App 激活并收到 reopen 事件（与点击 Dock 图标相同），但没有任何窗口出现，只能从菜单栏的"打开 Nebula"进入。原因是 `AppDelegate` 没有处理 reopen，SwiftUI 的单例 `Window` 场景关闭后不会因此自动重建。
+
+修复后，菜单栏标签（整个 App 会话期间一直存在）把 SwiftUI 的 `openWindow` 注册给 `AppDelegate`；收到 reopen 且没有可见窗口时，打开主窗口 `main`。
+
+实机验证（macOS 27.2 / arm64，生产数据目录中的真实配置）：GUI 连接后关闭主窗口，utun0 保持 2 条路由；先 `activate` 再发送 reopen，主窗口重新出现并显示"隧道已启动"，进程与路由不变。这个场景没有单元测试替身，以实机结果为准。
+
+`bash scripts/test.sh` 通过：Go race、57 个 Swift 用例、4 项退出场景。预览隔离检查和 `git diff --check` 也通过。
+
+## 2026-11-05 证书通知实机验收与修正（PR #15 / Issue #7）
+
+环境：macOS 27.2 / arm64，feat/7 合并 main 后构建（ad-hoc 签名，`net.nebula.gui.development`），使用生产数据目录，允许发送系统通知。由开发代理用辅助功能操作 GUI、系统权限提示和系统设置；通知内容不含配置或身份信息。
+
+- 打开“证书到期通知”后，出现系统权限提示；选择“允许”后，GUI 显示“已开启 30／7／1 天及到期提醒”。
+- 点击“发送测试通知”后，通知中心出现真实横幅“Nebula 测试通知”，GUI 显示“测试通知已提交”。
+- 在系统设置中关闭 Nebula 的“允许通知”，回到前台后，GUI 立即显示“系统未允许通知，请到系统设置允许 Nebula 通知”。此时发送测试通知被拒绝，也没有出现横幅。
+- 重新允许后回到前台，GUI 恢复“已开启”，再次发送测试通知时出现横幅。
+
+发现的问题：被拒绝的测试通知会通过 `setProblem` 写入全局错误，重新允许并成功发送后，页面顶部仍显示“系统未允许通知”，与系统状态及通知区的显示矛盾。修正后，测试通知和开关的失败只在通知区显示，下一次刷新时按系统状态覆盖，不再覆盖或残留全局错误。新增 `testNotificationFailuresStayInTheNotificationSection`；修正前该用例失败，修正后通过。预览隔离检查改为核对通知区文字，并确认全局错误为空。
+
+`bash scripts/test.sh` 通过：Go race、33 个客户端与 31 个 GUI Swift 用例、4 项退出场景。预览隔离检查和 `git diff --check` 也通过。用修正后的构建在实机上复验：在系统设置中撤销权限后，发送测试通知，拒绝提示只出现在通知区，页面顶部没有全局错误，也没有出现横幅。重新允许后回到前台，通知区恢复“已开启”，页面上不再残留“未允许”，再次发送时出现横幅。验收结束时已在 App 内关闭到期提醒（偏好值为 0），App 已退出。开发版系统通知权限的关闭，在屏幕再次锁定前没有确认完成。
+
+## 2026-11-05 证书提醒同步的启动与关闭竞态（Issue #30）
+
+审查 #15 合入的代码时，Codex（只读）报告了两处竞态，我逐条读代码核实成立：
+
+- 启动后，首次 `list` 返回前触发的前台刷新会同步空计划，撤回全部待发提醒并清空去重历史。列表加载后，已过阈值的当前提醒会再次以“1 秒后”发出。现在首次成功读取列表前不同步，打开开关时也一样。
+- 同步进行中关闭提醒，排队的调用会在撤回完成前返回。现在协调器让排队的调用等最新计划处理完，再返回同样的成功或失败。
+
+新增 `testReminderSyncWaitsForTheFirstNetworkList`（GUI，注入测试用的通知投递）和 `testQueuedCallerReceivesTheLatestPlanFailure`。原有的三项竞争测试改为断言排队调用在系统调用完成前不返回。修正前这些断言均失败；去掉启动门控后，新的 GUI 用例也会失败。
+
+`bash scripts/test.sh` 通过：Go race、34 个客户端与 32 个 GUI Swift 用例、4 项退出场景。预览隔离检查、`go vet` 和 `git diff --check` 也通过。这两处是竞态，不易在实机上稳定复现，本次未做实机验证。
+
+## 2026-11-05 特权边界安全审查与证书网段限制（Issue #32）
+
+Codex 对 root helper、普通后台的探测和安装脚本做了只读安全审查，报告了 5 项问题，我逐条对照代码核实：
+
+- **证书网段可覆盖公网路由（已修复，#32）。** 内核 `overlay/tun_darwin.go` 会为每个证书网段添加系统路由；helper 接受请求自带的 CA，原先只拒绝 `/0`。现在共用的 `Inspect` 只允许非公网网段（IPv4 10/8、172.16/12、192.168/16、100.64/10，IPv6 fc00::/7）。新增 `TestCertificateNetworksMustStayInNonPublicRanges`，覆盖 v2 多网段证书以及导入和 helper 内嵌校验两条路径。修复前，应当拒绝的 4 种情况全部被接受；修复后全部被拒绝，允许的 5 种情况照常通过。用户的真实配置位于私有网段，不受影响。
+- **运行目录父链可被置换、root 的 `chown/chmod` 会跟随符号链接（另立 Issue）。** 前提是攻击者已有 `daemon` 组对 `/var/run` 的写权限，普通用户没有。
+- **探测未绑定受管 utun（另立 Issue）。** 影响是可达性判断不准，不涉及提权。
+- **代码来源未认证、同用户进程都可以驱动 helper（记录为已知限制）。** 需要 Developer ID 才能真正解决，见 `docs/AUTHORIZATION.md`。
+
+审查中确认安全的部分：其他 UID 被拒绝；协议不能选择可执行文件、shell 参数或配置路径；root 只使用内嵌凭据，校验文件位于 root 私有目录；超范围路由、DNS、Lighthouse／Relay 服务端等设置被拒绝；探测没有注入路径；安装脚本的转义与锁处理合理。
+
+## 2026-11-05 helper 控制 socket 不跟随符号链接（Issue #34）
+
+来自 #32 的同一次特权边界审查。helper 原先用完整路径调用 `os.Chown`、`os.Chmod` 设置控制 socket，这两个调用会跟随符号链接；而运行目录的父目录 `/private/var/run` 对 `daemon` 组可写。现在 socket 在 `umask 0177` 下创建，一开始就是 `0600`；属主和权限改用带 `AT_SYMLINK_NOFOLLOW` 的 `Fchownat`／`Fchmodat` 设置，之后再用 `Lstat` 确认它是 socket、属主是受控用户、权限是 `0600`，否则 helper 退出。
+
+新增 `TestSecureSocketDoesNotFollowLinks`。用原来的做法时，该测试检测到链接目标被修改而失败；修正后，链接被拒绝、目标不变，真实 socket 被收紧为 `0600`。`go test -race ./...`、`go vet` 和 `bash scripts/test.sh` 通过。root 下的启动路径需要安装新的 helper 才能实机执行，本次未重新安装。
+
+## 2026-11-05 节点测试绑定 Nebula 隧道接口（Issue #36）
+
+来自 #32 的同一次特权边界审查。节点测试原先绑定通配地址、按系统路由表发送；如果局域网或其他 VPN 有更具体的路由，探测包会经物理网卡发出，结果却显示为 Nebula 节点的可达性。现在后台先找出与目标同一证书网段的本机地址，再找出持有该地址的接口，用 `IP_BOUND_IF`／`IPV6_BOUND_IF` 把 ICMP socket 绑定到该接口，源地址也绑定为本机地址。IPv4 与 `x/net/icmp` 一样设置 `IP_STRIPHDR`。找不到该接口时返回 `probe_unavailable`，不退回按系统路由发送。
+
+测试：新增 `probeSource` 地址匹配用例和“找不到接口时不可用”用例。按 DEVELOPMENT.md 手动开启的回环测试改为绑定回环接口，IPv4 和 IPv6 均收到 3/3。
+
+实机（macOS 27.2 / arm64，真实配置，已安装的 helper 未变）：
+
+- 用临时测试（未提交）绑定 utun0 的本机地址：发往 Nebula 节点收到 3/3；发往局域网默认网关时，系统拒绝发送，没有经物理网卡发出。同时段不绑定的系统 ping 可以到达网关（3/3），说明结果的差别来自接口绑定。
+- GUI“节点”页手动测试同一节点：3/3 回复、丢包 0%、平均 388.3 ms；同时段系统 ping 为 3/3。测试后已断开并退出，只剩 root helper 在运行。
+
+`bash scripts/test.sh` 通过：Go race、34 个客户端与 32 个 GUI 用例、4 项退出场景。`go vet` 和 `git diff --check` 也通过。
+
+## 2026-11-05 导入校验加固（Issue #38）
+
+Codex 对普通用户后台的导入与存储做了只读审查，报告了 5 项问题，我逐条对照代码核实。本 Issue 修复其中 3 项：
+
+- **错误字段回显未知键名。** 未知字段的键名原先直接成为 `Problem.Field`；如果复制粘贴把 PEM 放进了键名，凭据会出现在错误响应中。现在只回显符合字段名格式的键名，否则只返回 `config` 或 `pki`。
+- **YAML 对象规模。** 实测 `yaml.v3` 解码 map 的开销是平方级：单个对象 1 万、2 万、4 万个键分别耗时 156 ms、492 ms、2.2 s，2 MiB 内约 20 万个键会耗时约一分钟。这会阻塞后台，也会占住 root helper 的 `validateInline`。现在解码前限制每个对象最多 4096 个键，约 2 MiB 的 20 万键文件在 0.18 s 内被拒绝。
+- **受管副本大小。** 内嵌凭据并重新缩进后，配置可能超过 `Load` 的 2 MiB 读取上限。现在保存前检查，超出时返回 `config_too_large`。
+
+新增 3 个测试，修正前全部失败、修正后通过。
+
+另外两项的处理：存储写入缺少文件和目录的同步，另立 Issue。自定义 `--store` 位于不可信父目录时存在目录替换竞争；GUI 始终使用 `~/Library/Application Support/NebulaGUI`，`--data-dir` 只用于开发和测试，因此只记录，不修改。
+
+## 2026-11-05 受管存储断电一致性（Issue #40）
+
+同一次后台审查发现：受管存储在进程被终止时安全（rename 是原子的），但断电后不一定一致。`config.yaml` 写入后没有同步，rename 之后也没有同步目录；更新后立即清理旧版本、删除时改名后立即删除文件，都可能在断电后留下指向已删除版本的索引。
+
+现在 `config.yaml` 用 `O_EXCL|O_NOFOLLOW`、0600 创建并同步；`atomicJSON` 在 rename 后同步所在目录；`Save` 在发布索引前同步版本目录；`Remove` 在删除文件前同步删除标记所在的目录，同步失败时按“清理待重试”处理。顺序为：版本落盘，然后发布索引，最后清理旧版本。
+
+新增 `TestManagedConfigWriteNeverFollowsOrReplaces`：受管配置不会写穿符号链接，也不会覆盖已有文件。断电本身无法在单元测试中模拟，这部分依据代码审查确认顺序；现有的存储、更新、回滚和删除测试全部通过。`go test -race ./...`、`go vet` 和 `bash scripts/test.sh` 通过。
+
+## 2026-11-05 helper 发布号与实机升级（Issue #42）
+
+准备在本机升级时发现：#32、#34、#38 改了 helper 的行为，但没有提升 `HelperRelease`，用最新 main 构建的 App 仍显示“连接后台已启用”，不提供升级。现将发布号提升为 `0.3.1`；Swift 的 `supportsRecovery` 改为依据后端返回的 `updateRequired == false`，不再写死版本号；`AUTHORIZATION.md` 写明改动 helper 代码时必须提升发布号。新增 `testRecoveryFollowsTheBackendReleaseCheck`。`bash scripts/test.sh`（client 35、GUI 32、终止 4）、`go vet`、`go test -race ./...` 和 `git diff --check` 通过。
+
+实机：新构建连接旧 helper（0.3.0）时显示“连接后台可升级”。用户通过 GUI 授权升级后：
+- 安装的 helper 与 App 内组件 SHA-256 一致，属主 root:wheel、0755；启动项 root:wheel、0644；只有一个 helper 进程。
+- `helper.sock` 为 socket、属于 uid 501、权限 0600。
+- 用临时生成的凭据直接向 helper socket 发送 `connect`：主机证书网段为公网（198.51.100.0/24）时返回 `unsupported`（字段 `pki.cert`）；超过 4096 个键的 YAML 对象返回 `invalid_yaml`。两次都返回 `helperRelease=0.3.1`、未启动隧道，也没有出现对应地址的接口。临时凭据已删除。
+- 通过 GUI 连接真实网络，隧道启动并出现 utun；断开后 utun 移除，helper 和 socket 保持正常。
+
 ## 2026-11-05 Beta 打包分支合并 main（PR #16 / Issue #8）
 
 把 main（截至 #27）普通合并进 `feat/8-macos-beta-packaging`。冲突文件内容由 Codex 起草；git 操作、逐行审核和验证由 Claude 完成。
