@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/netip"
 	"path/filepath"
 	"strings"
 	"time"
@@ -18,7 +19,7 @@ type Service struct {
 	events    []Event
 	startedAt *time.Time
 	lastProbe time.Time
-	probe     func(context.Context, string) (ProbeResult, error)
+	probe     func(context.Context, string, netip.Addr) (ProbeResult, error)
 }
 
 func NewService(s *Store, e Engine) *Service { return &Service{store: s, engine: e, events: []Event{}} }
@@ -222,7 +223,8 @@ func (s *Service) invoke(r Request) (any, error) {
 		if probe == nil {
 			probe = probeNode
 		}
-		result, err := probe(ctx, address.String())
+		local, _ := probeSource(address, profile.Networks) // validateProbeTarget found the matching network.
+		result, err := probe(ctx, address.String(), local)
 		if err == nil {
 			s.event("node_probe_finished")
 		}
