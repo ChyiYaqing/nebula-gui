@@ -5,7 +5,7 @@ import NebulaClient
 struct MenuContent: View {
     @ObservedObject var model: AppModel
     @Environment(\.openWindow) private var openWindow
-    private var profile: NebulaClient.NetworkProfile? { model.active ?? model.selected }
+    private var profile: NebulaClient.NetworkProfile? { model.menuProfile }
     private var presentation: ConnectionPresentation { ConnectionPresentation(model: model, profileID: profile?.id) }
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
