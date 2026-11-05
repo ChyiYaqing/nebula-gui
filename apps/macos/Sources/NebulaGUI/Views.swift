@@ -130,8 +130,8 @@ struct MainView: View {
             Image(systemName: model.authorization.available ? "checkmark.shield" : "lock.shield")
                 .foregroundStyle(model.authorization.available ? Palette.accent : .orange)
             VStack(alignment: .leading, spacing: 5) {
-                Text(model.authorization.updateRequired == true ? "连接后台可升级" : model.authorization.available ? "连接后台已启用" : "首次连接需要管理员授权").font(.callout.weight(.medium))
-                Text(model.authorization.updateRequired == true ? "升级后可使用异常恢复和唤醒刷新，已保存配置保留。" : model.authorization.available ? "GUI 以普通用户运行，网络组件负责隧道。" : "点击启用，查看安装内容，再通过 macOS 系统窗口授权。")
+                Text(model.status.isStarted && !model.authorization.available ? "连接后台状态待确认" : model.authorization.updateRequired == true ? "连接后台可升级" : model.authorization.available ? "连接后台已启用" : "首次连接需要管理员授权").font(.callout.weight(.medium))
+                Text(model.status.isStarted && !model.authorization.available ? "上次确认隧道已启动，可先尝试断开，再刷新后台状态。" : model.authorization.updateRequired == true ? "升级后可使用异常恢复和唤醒刷新，已保存配置保留。" : model.authorization.available ? "GUI 以普通用户运行，网络组件负责隧道。" : "点击启用，查看安装内容，再通过 macOS 系统窗口授权。")
                     .font(.caption).foregroundStyle(.secondary)
             }
             Spacer(minLength: 8)
@@ -181,8 +181,8 @@ struct MainView: View {
             HStack {
                 if model.busy { ProgressView().controlSize(.small) }
                 NetworkActionButton(
-                    title: !model.authorization.available ? "启用连接后台" : model.isCurrentStarted ? "断开连接" : model.status.isStarted ? "切换并连接" : "连接网络",
-                    symbol: !model.authorization.available ? "lock.open" : model.status.isStarted ? "arrow.triangle.swap" : "power",
+                    title: model.connectionActionTitle,
+                    symbol: model.isCurrentStarted ? "stop.circle" : !model.authorization.available ? "lock.open" : model.status.isStarted ? "arrow.triangle.swap" : "power",
                     disconnecting: model.isCurrentStarted
                 ) { Task { await model.connectSelected() } }.disabled(model.busy)
                 Spacer()
@@ -326,11 +326,11 @@ struct MenuContent: View {
                 Text(active.name).font(.subheadline)
                 Text(active.networks.first ?? "").font(.system(size: 12, design: .monospaced)).foregroundStyle(.secondary)
                 NetworkActionButton(
-                    title: !model.authorization.available ? "启用连接后台" : model.status.isStarted ? "断开连接" : "连接所选网络",
-                    symbol: model.authorization.available ? "power" : "lock.open",
+                    title: model.menuActionTitle,
+                    symbol: model.status.isStarted ? "stop.circle" : model.authorization.available ? "power" : "lock.open",
                     disconnecting: model.status.isStarted
                 ) {
-                    if !model.authorization.available { openWindow(id: "main"); NSApp.activate(ignoringOtherApps: true) }
+                    if !model.status.isStarted && !model.authorization.available { openWindow(id: "main"); NSApp.activate(ignoringOtherApps: true) }
                     Task { if model.status.isStarted { await model.disconnect() } else { await model.connectSelected() } }
                 }.disabled(model.busy)
             }

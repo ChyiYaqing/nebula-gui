@@ -205,3 +205,57 @@ import NebulaClient
         _ = await model.shutdown(); clock.cancel()
     }
 }
+
+extension AppModelTests {
+    func testPrimaryDisconnectSurvivesUnavailableAuthorizationHealth() async throws {
+        let backend = controlledBackend(); let model = try model(backend)
+        model.status = started(); model.authorization = .missing
+        XCTAssertEqual(model.connectionActionTitle, "断开连接")
+        XCTAssertEqual(model.menuActionTitle, "断开连接")
+        let stopping = backend.expect("disconnect")
+        let task = Task { await model.connectSelected() }
+        await fulfillment(of: [stopping], timeout: 2)
+        try backend.reply("disconnect", ConnectionStatus.disconnected); await task.value
+        XCTAssertEqual(backend.calls.map(\.method), ["disconnect"])
+        XCTAssertEqual(model.status.state, "disconnected")
+        XCTAssertFalse(model.showAuthorizationReview)
+        _ = await model.shutdown()
+    }
+    func testMenuDisconnectTargetsActiveNetworkWhenSelectionDiffers() async throws {
+        let backend = controlledBackend(); let model = try model(backend)
+        model.status = started(); model.selectedID = "second"; model.authorization = .missing
+        XCTAssertEqual(model.menuActionTitle, "断开连接")
+        XCTAssertEqual(model.connectionActionTitle, "启用连接后台")
+        let stopping = backend.expect("disconnect")
+        let task = Task { await model.disconnect() }
+        await fulfillment(of: [stopping], timeout: 2)
+        try backend.reply("disconnect", ConnectionStatus.disconnected); await task.value
+        XCTAssertEqual(backend.calls.map(\.method), ["disconnect"])
+        XCTAssertEqual(model.selectedID, "second")
+        XCTAssertEqual(model.status.state, "disconnected")
+        _ = await model.shutdown()
+    }
+    func testUnavailableComponentStillPromptsForNewConnection() async throws {
+        let backend = controlledBackend(); let model = try model(backend)
+        model.authorization = .missing
+        XCTAssertEqual(model.connectionActionTitle, "启用连接后台")
+        XCTAssertEqual(model.menuActionTitle, "启用连接后台")
+        await model.connectSelected()
+        XCTAssertTrue(model.showAuthorizationReview)
+        XCTAssertTrue(backend.calls.isEmpty)
+        _ = await model.shutdown()
+    }
+    func testFailedPrimaryDisconnectRetainsCleanupUncertainty() async throws {
+        let backend = controlledBackend(); let model = try model(backend)
+        model.status = started(); model.authorization = .missing; model.automaticRecovery = false
+        let stopping = backend.expect("disconnect")
+        let task = Task { await model.connectSelected() }
+        await fulfillment(of: [stopping], timeout: 2)
+        backend.fail("disconnect", code: "cleanup_incomplete"); await task.value
+        XCTAssertEqual(model.status.state, "failed")
+        XCTAssertEqual(model.status.profileID, "first")
+        XCTAssertEqual(model.problem?.code, "cleanup_incomplete")
+        XCTAssertFalse(model.showAuthorizationReview)
+        _ = await model.shutdown()
+    }
+}
