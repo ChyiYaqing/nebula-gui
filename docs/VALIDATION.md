@@ -334,3 +334,18 @@ Codex 对普通用户后台的导入与存储做了只读审查，报告了 5 �
 - `helper.sock` 为 socket、属于 uid 501、权限 0600。
 - 用临时生成的凭据直接向 helper socket 发送 `connect`：主机证书网段为公网（198.51.100.0/24）时返回 `unsupported`（字段 `pki.cert`）；超过 4096 个键的 YAML 对象返回 `invalid_yaml`。两次都返回 `helperRelease=0.3.1`、未启动隧道，也没有出现对应地址的接口。临时凭据已删除。
 - 通过 GUI 连接真实网络，隧道启动并出现 utun；断开后 utun 移除，helper 和 socket 保持正常。
+
+## 2026-11-05 Beta 打包分支合并 main（PR #16 / Issue #8）
+
+把 main（截至 #27）普通合并进 `feat/8-macos-beta-packaging`。冲突文件内容由 Codex 起草；git 操作、逐行审核和验证由 Claude 完成。
+
+- `build.sh`：保留 VERSION／BUILD_NUMBER、release 配置、Go 版本注入、构建清单和 `verify-app.py`。加入 main 的原创图标生成，图标在签名和生成清单之前写入。Info.plist 同时声明 `CFBundleIconFile` 和来自文件的版本号。固定内核修订与 `verify-kernel.sh` 两边一致，没有放宽。
+- `Views.swift`：采用 main 的分页结构，只把侧栏版本改为读取 Bundle。
+- `verify-app.py`：新增严格的文件／目录白名单，要求含 AppIcon.icns，并校验清单中的图标哈希，拒绝符号链接和意外文件。`test-package.py` 新增 6 项负向用例：图标声明错误、篡改、缺失，以及多余文件、目录、符号链接。
+
+验证（Apple Silicon，macOS 27.2）：
+- `bash scripts/test.sh` 通过：Go race、27 个客户端与 30 个 GUI Swift 用例、4 项 AppKit 退出场景。`go vet` 通过。
+- release 构建、`verify-app.py`、`test-package.py`（全部负向用例）通过，`nebula-ui-preview --verify-isolation` 通过。
+- 在干净工作区运行 `package-beta.sh`，生成内部候选 0.3.2 build 5：`sourceDirty=false`、release 配置、含 AppIcon.icns，归档回读校验通过。
+
+未验收：干净机器安装／升级失败／卸载、macOS 13 与 Intel、Developer ID 签名与公证。产物为 ad-hoc 签名，没有上传或安装，PR 继续保持 Draft。

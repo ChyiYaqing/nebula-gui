@@ -15,6 +15,12 @@ import (
 func main() { os.Exit(run()) }
 
 func run() (exitCode int) {
+	if len(os.Args) == 2 && os.Args[1] == "metadata" {
+		if json.NewEncoder(os.Stdout).Encode(client.BuildInformation("backend")) != nil {
+			return 1
+		}
+		return 0
+	}
 	// This development binary is not an authorized privileged helper.
 	if os.Geteuid() == 0 {
 		fmt.Fprintln(os.Stderr, "This development backend must not run as root.")
