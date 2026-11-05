@@ -291,3 +291,16 @@ Codex 对 root helper、普通后台的探测和安装脚本做了只读安全�
 来自 #32 的同一次特权边界审查。helper 原先用完整路径调用 `os.Chown`、`os.Chmod` 设置控制 socket，这两个调用会跟随符号链接；而运行目录的父目录 `/private/var/run` 对 `daemon` 组可写。现在 socket 在 `umask 0177` 下创建，一开始就是 `0600`；属主和权限改用带 `AT_SYMLINK_NOFOLLOW` 的 `Fchownat`／`Fchmodat` 设置，之后再用 `Lstat` 确认它是 socket、属主是受控用户、权限是 `0600`，否则 helper 退出。
 
 新增 `TestSecureSocketDoesNotFollowLinks`。用原来的做法时，该测试检测到链接目标被修改而失败；修正后，链接被拒绝、目标不变，真实 socket 被收紧为 `0600`。`go test -race ./...`、`go vet` 和 `bash scripts/test.sh` 通过。root 下的启动路径需要安装新的 helper 才能实机执行，本次未重新安装。
+
+## 2026-11-05 节点测试绑定 Nebula 隧道接口（Issue #36）
+
+来自 #32 的同一次特权边界审查。节点测试原先绑定通配地址、按系统路由表发送；如果局域网或其他 VPN 有更具体的路由，探测包会经物理网卡发出，结果却显示为 Nebula 节点的可达性。现在后台先找出与目标同一证书网段的本机地址，再找出持有该地址的接口，用 `IP_BOUND_IF`／`IPV6_BOUND_IF` 把 ICMP socket 绑定到该接口，源地址也绑定为本机地址。IPv4 与 `x/net/icmp` 一样设置 `IP_STRIPHDR`。找不到该接口时返回 `probe_unavailable`，不退回按系统路由发送。
+
+测试：新增 `probeSource` 地址匹配用例和“找不到接口时不可用”用例。按 DEVELOPMENT.md 手动开启的回环测试改为绑定回环接口，IPv4 和 IPv6 均收到 3/3。
+
+实机（macOS 27.2 / arm64，真实配置，已安装的 helper 未变）：
+
+- 用临时测试（未提交）绑定 utun0 的本机地址：发往 Nebula 节点收到 3/3；发往局域网默认网关时，系统拒绝发送，没有经物理网卡发出。同时段不绑定的系统 ping 可以到达网关（3/3），说明结果的差别来自接口绑定。
+- GUI“节点”页手动测试同一节点：3/3 回复、丢包 0%、平均 388.3 ms；同时段系统 ping 为 3/3。测试后已断开并退出，只剩 root helper 在运行。
+
+`bash scripts/test.sh` 通过：Go race、34 个客户端与 32 个 GUI 用例、4 项退出场景。`go vet` 和 `git diff --check` 也通过。

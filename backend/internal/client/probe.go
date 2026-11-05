@@ -56,14 +56,20 @@ func validateProbeTarget(text string, networks []string) (netip.Addr, error) {
 	}
 	return address, nil
 }
-func probeNode(ctx context.Context, target string) (ProbeResult, error) {
-	network, bind := "udp4", "0.0.0.0"
-	if netip.MustParseAddr(target).Is6() {
-		network, bind = "udp6", "::"
+
+// probeSource returns this device's address in the certificate network containing target.
+func probeSource(target netip.Addr, networks []string) (netip.Addr, bool) {
+	for _, text := range networks {
+		if prefix, err := netip.ParsePrefix(text); err == nil && prefix.Contains(target) {
+			return prefix.Addr().Unmap(), true
+		}
 	}
-	conn, err := icmp.ListenPacket(network, bind)
+	return netip.Addr{}, false
+}
+func probeNode(ctx context.Context, target string, local netip.Addr) (ProbeResult, error) {
+	conn, err := overlayProbeSocket(netip.MustParseAddr(target), local)
 	if err != nil {
-		return ProbeResult{}, problem("probe_unavailable", "系统未允许 ICMP 探测；仍可通过实际访问检查节点。", "")
+		return ProbeResult{}, err
 	}
 	defer conn.Close()
 	return probeEcho(ctx, conn, target, time.Second)
