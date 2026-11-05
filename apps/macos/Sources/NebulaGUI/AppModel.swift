@@ -465,15 +465,17 @@ extension AppModel {
             && status.profileID == started.profileID && status.startedAt == started.startedAt
         probe = sameSession ? outcome : nil
     }
+    /// Background reconciliation: retried every 5 minutes even on failure, reported locally
+    /// so it never replaces an unrelated connection problem.
     func refreshNotifications() async {
         guard !shuttingDown else { return }
+        lastNotificationSync = Date()
         do {
             try await certificateNotifications.synchronize(profiles)
             guard !shuttingDown else { return }
-            lastNotificationSync = Date()
             notificationsEnabled = certificateNotifications.enabled
             notificationText = !notificationsEnabled ? "到期提醒未开启" : certificateNotifications.permissionAllowed ? "已开启 30／7／1 天及到期提醒" : "系统未允许通知，请到系统设置允许 Nebula 通知"
-        } catch { if !shuttingDown { setProblem(error) } }
+        } catch { if !shuttingDown { notificationText = "提醒补排未完成，将在 5 分钟内自动重试" } }
     }
     func sendTestNotification() async {
         guard !notificationsBusy, !shuttingDown else { return }
