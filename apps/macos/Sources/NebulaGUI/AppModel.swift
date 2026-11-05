@@ -41,7 +41,10 @@ extension BackendClient: AppBackend {}
     private var networkAvailable = true
     private var shuttingDown = false
     private var notificationsAllowed = true
-    private lazy var certificateNotifications = CertificateNotifications(allowDelivery: notificationsAllowed)
+    private var injectedNotifications: CertificateNotifications?
+    private lazy var certificateNotifications = injectedNotifications ?? CertificateNotifications(allowDelivery: notificationsAllowed)
+    /// Reminder plans derive from the network list; an empty list before the first load is unknown, not empty.
+    private var profilesLoaded = false
     var canCancelConnection: Bool { connectionBusy || (recovery.desiredProfileID != nil && !recoveryText.isEmpty) }
     /// The network that automatic recovery targets; status.profileID may already be cleared.
     var recoveryProfileID: String? { recovery.desiredProfileID }
@@ -88,9 +91,9 @@ extension BackendClient: AppBackend {}
     init(client: any AppBackend, now: @escaping () -> Date = Date.init,
          wait: @escaping (TimeInterval) async throws -> Void = { seconds in
              try await Task.sleep(nanoseconds: UInt64(max(0, seconds) * 1_000_000_000))
-         }) {
+         }, notifications: CertificateNotifications? = nil) {
         self.client = client; self.now = now; self.wait = wait
-        notificationsAllowed = false
+        notificationsAllowed = false; injectedNotifications = notifications
     }
     convenience init() {
         let arguments = CommandLine.arguments
@@ -133,7 +136,7 @@ extension BackendClient: AppBackend {}
         do {
             let listed = try await client.send(BackendRequest(method: "list"), as: [NetworkProfile].self)
             guard !shuttingDown else { return }
-            profiles = listed
+            profiles = listed; profilesLoaded = true
             if !profiles.contains(where: { $0.id == selectedID }) { selectedID = profiles.first?.id }
             await refreshStatus()
             guard !shuttingDown else { return }
@@ -468,7 +471,7 @@ extension AppModel {
     /// Background reconciliation: retried every 5 minutes even on failure, reported locally
     /// so it never replaces an unrelated connection problem.
     func refreshNotifications() async {
-        guard !shuttingDown else { return }
+        guard !shuttingDown, profilesLoaded else { return }
         lastNotificationSync = Date()
         do {
             try await certificateNotifications.synchronize(profiles)
@@ -495,7 +498,7 @@ extension AppModel {
             if enabled {
                 notificationsEnabled = try await certificateNotifications.enable()
                 notificationText = notificationsEnabled ? "已开启 30／7／1 天及到期提醒" : "系统未允许通知，仍可在 App 内查看有效期"
-                if notificationsEnabled { try await certificateNotifications.synchronize(profiles) }
+                if notificationsEnabled && profilesLoaded { try await certificateNotifications.synchronize(profiles) }
             } else {
                 await certificateNotifications.disable(); notificationsEnabled = false; notificationText = "到期提醒未开启"
             }
