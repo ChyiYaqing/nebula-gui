@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"net"
+	"net/netip"
 	"os"
 	"testing"
 	"time"
@@ -88,7 +89,8 @@ func TestUnprivilegedICMPLoopback(t *testing.T) {
 	}
 	for _, target := range []string{"127.0.0.1", "::1"} {
 		ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
-		result, err := probeNode(ctx, target)
+		// Loopback stands in for the utun holding this device's Nebula address.
+		result, err := probeNode(ctx, target, netip.MustParseAddr(target))
 		cancel()
 		if err != nil || result.Received != 3 {
 			t.Fatalf("%s: %+v, %v", target, result, err)

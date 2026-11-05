@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import NebulaClient
 
@@ -163,11 +164,7 @@ struct NetworkConfiguration: View {
                         .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
                 }
             }.font(.caption).nebulaSurface()
-            VStack(alignment: .leading, spacing: 10) {
-                Toggle("证书到期通知", isOn: Binding(get: { model.notificationsEnabled }, set: { enabled in Task { await model.setNotifications(enabled) } }))
-                    .toggleStyle(.switch).font(.system(size: 13, weight: .medium)).disabled(model.notificationsBusy)
-                Text(model.notificationText).font(.caption).foregroundStyle(.secondary)
-            }
+            CertificateNotificationSettings(model: model)
             Divider()
             AuthorizationStatusView(model: model)
             VStack(alignment: .leading, spacing: 12) {
@@ -189,6 +186,25 @@ struct NetworkConfiguration: View {
                     }.padding(.vertical, 3)
                 }
             }.font(.caption)
+        }
+    }
+}
+
+struct CertificateNotificationSettings: View {
+    @ObservedObject var model: AppModel
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Toggle("证书到期通知", isOn: Binding(get: { model.notificationsEnabled }, set: { enabled in Task { await model.setNotifications(enabled) } }))
+                .toggleStyle(.switch).font(.system(size: 13, weight: .medium)).disabled(model.notificationsBusy)
+            Text(model.notificationText).font(.caption).foregroundStyle(.secondary)
+            HStack {
+                Button("发送测试通知") { Task { await model.sendTestNotification() } }
+                    .frame(minHeight: 40).disabled(model.notificationsBusy)
+                Button("打开系统设置") { NSWorkspace.shared.open(URL(fileURLWithPath: "/System/Applications/System Settings.app")) }
+                    .frame(minHeight: 40)
+            }
+            Text("App 运行时每 5 分钟及回到前台时补排提醒；退出后仅保留系统已安排的提醒。")
+                .font(.caption).foregroundStyle(.secondary)
         }
     }
 }

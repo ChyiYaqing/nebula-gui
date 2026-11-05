@@ -22,6 +22,10 @@ import (
 
 func fixtureAt(t *testing.T, dir string, expires time.Time) string {
 	t.Helper()
+	return fixtureNetworks(t, dir, expires, "10.73.0.2/24")
+}
+func fixtureNetworks(t *testing.T, dir string, expires time.Time, networks ...string) string {
+	t.Helper()
 	now := time.Now()
 	pub, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
@@ -35,7 +39,7 @@ func fixtureAt(t *testing.T, dir string, expires time.Time) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	host, err := (&cert.TBSCertificate{Version: cert.Version2, Name: "test-mac", Curve: cert.Curve_CURVE25519, NotBefore: now.Add(-24 * time.Hour), NotAfter: expires, PublicKey: key.PublicKey().Bytes(), Networks: mustPrefixes("10.73.0.2/24")}).Sign(ca, cert.Curve_CURVE25519, priv)
+	host, err := (&cert.TBSCertificate{Version: cert.Version2, Name: "test-mac", Curve: cert.Curve_CURVE25519, NotBefore: now.Add(-24 * time.Hour), NotAfter: expires, PublicKey: key.PublicKey().Bytes(), Networks: mustPrefixes(networks...)}).Sign(ca, cert.Curve_CURVE25519, priv)
 	if err != nil {
 		t.Fatal(err)
 	}

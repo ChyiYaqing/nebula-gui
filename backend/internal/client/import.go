@@ -6,8 +6,10 @@ import (
 	"encoding/hex"
 	"errors"
 	"io"
+	"net/netip"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -20,6 +22,10 @@ import (
 )
 
 const maxFileSize = 2 << 20
+
+// yaml.v3 checks duplicate keys pairwise while decoding a mapping, so the
+// per-object size is bounded before decoding. Real configurations stay far below.
+const maxMappingEntries = 4096
 
 // No symlinks or special files: inputs must be explicitly selected regular files.
 func readPrivateInput(path string) ([]byte, error) {
@@ -47,7 +53,7 @@ func parseConfig(b []byte) (map[string]any, error) {
 	}
 	var check func(*yaml.Node, int) bool
 	check = func(n *yaml.Node, depth int) bool {
-		if depth > 48 || n.Kind == yaml.AliasNode {
+		if depth > 48 || n.Kind == yaml.AliasNode || n.Kind == yaml.MappingNode && len(n.Content) > 2*maxMappingEntries {
 			return false
 		}
 		for _, c := range n.Content {
@@ -58,7 +64,7 @@ func parseConfig(b []byte) (map[string]any, error) {
 		return true
 	}
 	if !check(&n, 0) {
-		return nil, problem("invalid_yaml", "配置层级过深或包含不支持的 YAML 别名。", "config")
+		return nil, problem("invalid_yaml", "配置层级过深、单个对象字段过多，或包含不支持的 YAML 别名。", "config")
 	}
 	var m map[string]any
 	if n.Decode(&m) != nil || m == nil {
@@ -70,6 +76,23 @@ func parseConfig(b []byte) (map[string]any, error) {
 	}
 	return m, nil
 }
+
+var fieldName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{0,63}$`)
+
+// reportedField names an unexpected key only when it looks like a field. A key
+// may be pasted credential text, which must never travel back in a Problem.
+func reportedField(scope, key string) string {
+	if !fieldName.MatchString(key) {
+		if scope == "" {
+			return "config"
+		}
+		return scope
+	}
+	if scope == "" {
+		return key
+	}
+	return scope + "." + key
+}
 func section(m map[string]any, key string) map[string]any { v, _ := m[key].(map[string]any); return v }
 func validatePolicy(m map[string]any) error {
 	allowed := map[string]bool{}
@@ -78,7 +101,7 @@ func validatePolicy(m map[string]any) error {
 	}
 	for key := range m {
 		if !allowed[key] {
-			return problem("unsupported", "配置包含首版不支持的顶层字段。", key)
+			return problem("unsupported", "配置包含首版不支持的顶层字段。", reportedField("", key))
 		}
 	}
 	for _, key := range []string{"pki", "lighthouse", "listen", "punchy", "relay", "tun", "firewall", "logging", "sshd", "stats", "dns", "local_api"} {
@@ -112,7 +135,7 @@ func validatePolicy(m map[string]any) error {
 	if p := section(m, "pki"); p != nil {
 		for k := range p {
 			if k != "ca" && k != "cert" && k != "key" && k != "blocklist" && k != "disconnect_invalid" && k != "disconnect_expired" {
-				return problem("unsupported", "不支持该凭据设置。", "pki."+k)
+				return problem("unsupported", "不支持该凭据设置。", reportedField("pki", k))
 			}
 		}
 	}
@@ -188,8 +211,8 @@ func Inspect(path, name string, files map[string]string, now time.Time) (*Candid
 		return nil, problem("expired", "主机证书已过期，请联系管理员更新。", "pki.cert")
 	}
 	for _, n := range host.Networks() {
-		if n.Bits() == 0 {
-			return nil, problem("unsupported", "主机证书不能声明默认路由。", "pki.cert")
+		if !overlayNetworkAllowed(n) {
+			return nil, problem("unsupported", "主机证书的网段必须位于私有地址范围（IPv4 10/8、172.16/12、192.168/16、100.64/10，IPv6 fc00::/7）。此版本不安装覆盖公网的路由。", "pki.cert")
 		}
 	}
 	if _, err = ca.VerifyCertificate(now, host); err != nil {
@@ -206,6 +229,10 @@ func Inspect(path, name string, files map[string]string, now time.Time) (*Candid
 	runtime, err := yaml.Marshal(m)
 	if err != nil {
 		return nil, problem("invalid_config", "无法读取配置。", "config")
+	}
+	// Load reads the managed copy back with the same limit as any input file.
+	if len(runtime) > maxFileSize {
+		return nil, problem("config_too_large", "嵌入凭据后的配置超过 2 MB，无法保存。请联系管理员精简 CA 证书或配置。", "config")
 	}
 	c := config.NewC(logging.NewLogger(io.Discard))
 	if c.LoadString(string(runtime)) != nil {
@@ -299,4 +326,25 @@ func boundedRuntimeDuration(value any, field string, fallback, minimum, maximum 
 		return 0, problem("unsupported", "计时参数超出安全范围。", field)
 	}
 	return d, nil
+}
+
+// The kernel routes every certificate network to the tunnel as root, and the helper
+// accepts caller-supplied CAs. Keeping networks in non-public ranges means a
+// certificate can never claim the default route, public services or other VPNs.
+var overlayRanges = []netip.Prefix{
+	netip.MustParsePrefix("10.0.0.0/8"),
+	netip.MustParsePrefix("172.16.0.0/12"),
+	netip.MustParsePrefix("192.168.0.0/16"),
+	netip.MustParsePrefix("100.64.0.0/10"),
+	netip.MustParsePrefix("fc00::/7"),
+}
+
+func overlayNetworkAllowed(n netip.Prefix) bool {
+	n = n.Masked()
+	for _, r := range overlayRanges {
+		if n.Bits() >= r.Bits() && r.Contains(n.Addr()) {
+			return true
+		}
+	}
+	return false
 }
