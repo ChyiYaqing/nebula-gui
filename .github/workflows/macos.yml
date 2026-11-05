@@ -43,6 +43,13 @@ jobs:
         run: bash scripts/prepare-kernel.sh
       - name: Build and test
         run: bash scripts/test.sh
+      - name: Isolated native UI previews
+        run: |
+          bash scripts/preview-ui.sh --build-only
+          .build/bin/nebula-ui-preview --verify-isolation
+          .build/bin/nebula-ui-preview --scenario empty --width 760 --snapshot build/CI/empty.png
+          .build/bin/nebula-ui-preview --scenario connected --page nodes --width 760 --snapshot build/CI/nodes.png
+          .build/bin/nebula-ui-preview --scenario unavailable --menu --appearance dark --snapshot build/CI/menu-dark.png
       - name: Go vet
         working-directory: nebula-gui/backend
         run: go vet ./...

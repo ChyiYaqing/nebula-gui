@@ -13,10 +13,14 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Helpers" "$APP/Contents/Resources"
 cp "$SWIFT_BIN/NebulaGUI" "$APP/Contents/MacOS/NebulaGUI"
 cp "$ROOT/.build/bin/nebula-gui-backend" "$APP/Contents/Helpers/nebula-gui-backend"
 cp "$ROOT/.build/bin/nebula-gui-helper" "$APP/Contents/Helpers/nebula-gui-helper"
+swiftc -parse-as-library "$ROOT/apps/macos/Sources/NebulaGUI/NebulaMark.swift" "$ROOT/scripts/generate-icon.swift" -o "$ROOT/.build/bin/generate-icon"
+ICONSET="$ROOT/.build/Nebula.iconset"
+"$ROOT/.build/bin/generate-icon" "$ICONSET"
+/usr/bin/iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/AppIcon.icns"
 python3 - "$APP/Contents/Info.plist" <<'PY'
 import plistlib,sys
 with open(sys.argv[1],'wb') as f:
- plistlib.dump({'CFBundleName':'Nebula','CFBundleDisplayName':'Nebula','CFBundleIdentifier':'net.nebula.gui.development','CFBundleExecutable':'NebulaGUI','CFBundlePackageType':'APPL','CFBundleShortVersionString':'0.3.1','CFBundleVersion':'4','LSMinimumSystemVersion':'13.0','NSHighResolutionCapable':True,'NSSupportsAutomaticTermination':False,'NSHumanReadableCopyright':'Nebula GUI development build'},f)
+ plistlib.dump({'CFBundleName':'Nebula','CFBundleDisplayName':'Nebula','CFBundleIdentifier':'net.nebula.gui.development','CFBundleExecutable':'NebulaGUI','CFBundlePackageType':'APPL','CFBundleIconFile':'AppIcon.icns','CFBundleShortVersionString':'0.3.1','CFBundleVersion':'4','LSMinimumSystemVersion':'13.0','NSHighResolutionCapable':True,'NSSupportsAutomaticTermination':False,'NSHumanReadableCopyright':'Nebula GUI development build'},f)
 PY
 codesign --force --sign - "$APP/Contents/Helpers/nebula-gui-backend"
 codesign --force --sign - "$APP/Contents/Helpers/nebula-gui-helper"

@@ -45,8 +45,7 @@ struct PeerListView: View {
                             HStack(spacing: 8) {
                                 Text(address).monospaced().textSelection(.enabled).lineLimit(1).truncationMode(.middle)
                                     .frame(maxWidth: .infinity, alignment: .leading).help(address)
-                                Button { copy(address) } label: { Image(systemName: "doc.on.doc").frame(width: 40, height: 40) }
-                                    .buttonStyle(.borderless).tint(Palette.accent).accessibilityLabel("复制节点地址 \(address)")
+                                CopyAddressButton(address: address, label: "复制节点地址 \(address)") { copy(address) }
                                 Button { probe(address) } label: { Label("测试", systemImage: "waveform.path.ecg").frame(minHeight: 40) }
                                     .disabled(!canProbe || probeBusy).help("测试 \(address)")
                                     .accessibilityLabel("测试节点 \(address)")
