@@ -15,8 +15,19 @@ import SwiftUI
         MenuBarExtra {
             MenuContent(model: model)
         } label: {
-            Image(nsImage: NebulaGlyph.image(size: 20, connected: model.status.isStarted))
-                .accessibilityLabel(model.status.isStarted ? "Nebula 隧道已启动" : "Nebula 未连接")
+            // The status item lives for the whole app session, unlike the closable main window.
+            MenuBarLabel(connected: model.status.isStarted) { delegate.openMainWindow = $0 }
         }.menuBarExtraStyle(.window)
+    }
+}
+
+private struct MenuBarLabel: View {
+    let connected: Bool
+    let register: (@escaping () -> Void) -> Void
+    @Environment(\.openWindow) private var openWindow
+    var body: some View {
+        Image(nsImage: NebulaGlyph.image(size: 20, connected: connected))
+            .accessibilityLabel(connected ? "Nebula 隧道已启动" : "Nebula 未连接")
+            .onAppear { let open = openWindow; register { open(id: "main") } }
     }
 }

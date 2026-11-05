@@ -2,7 +2,14 @@ import AppKit
 
 @MainActor final class AppDelegate: NSObject, NSApplicationDelegate {
     var model: AppModel?
+    /// Set by the menu bar label; reopens the single main window after it was closed.
+    var openMainWindow: (() -> Void)?
     private var cleaningUp = false
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if !flag { openMainWindow?() }
+        return true
+    }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
