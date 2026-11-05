@@ -279,11 +279,22 @@ func (s *Store) Remove(id string) error {
 	if _, e := s.index(id); e != nil {
 		return e
 	}
-	// First unpublish the profile; all removal paths are constructed from a validated ID.
-	if e := os.Remove(filepath.Join(s.root, "profiles", id+".json")); e != nil {
-		return e
+	// Keep a recoverable removal marker so a crash or failed unlink can be retried.
+	marker := filepath.Join(s.root, "profiles", id+".removed")
+	if _, err := os.Lstat(marker); !os.IsNotExist(err) {
+		return errors.New("removal marker already exists")
 	}
-	return os.RemoveAll(filepath.Join(s.root, "profiles", id))
+	if err := os.Rename(filepath.Join(s.root, "profiles", id+".json"), marker); err != nil {
+		return err
+	}
+	pending := problem("profile_cleanup_pending", "\u914d\u7f6e\u5df2\u79fb\u9664\uff0c\u4f46\u53d7\u7ba1\u526f\u672c\u6e05\u7406\u5c1a\u672a\u5b8c\u6210\uff1b\u5237\u65b0\u65f6\u5c06\u91cd\u8bd5\u3002", "")
+	if err := s.pruneProfile(id, true); err != nil {
+		return pending
+	}
+	if err := os.Remove(marker); err != nil {
+		return pending
+	}
+	return nil
 }
 
 func normalizedProfileName(raw string) (string, error) {
