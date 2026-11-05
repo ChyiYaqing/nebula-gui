@@ -17,6 +17,11 @@ for name, argument in (("backend", "metadata"), ("helper", "-metadata")):
     path = app / "Contents/Helpers" / ("nebula-gui-" + name)
     components[name] = json.loads(command([str(path), argument]))
 info = plistlib.loads((app/"Contents/Info.plist").read_bytes())
+if info.get("CFBundleIconFile") != "AppIcon.icns":
+    raise SystemExit("Unexpected app icon declaration")
+icon = app/"Contents/Resources/AppIcon.icns"
+if not icon.is_file() or icon.is_symlink():
+    raise SystemExit("Missing regular app icon")
 kernel = command(["git", "rev-parse", "HEAD"], cwd=root.parent/"nebula")
 for name, value in components.items():
     if value["component"] != name or value["kernelRevision"] != kernel or value["applicationVersion"] != info["CFBundleShortVersionString"] or value["buildNumber"] != info["CFBundleVersion"]:
@@ -32,6 +37,7 @@ manifest = {
     "kernelRevision": kernel, "architecture": platform.machine(),
     "swift": command(["swift", "--version"]), "xcode": command(["xcodebuild", "-version"]),
     "components": components,
+    "resourceHashes": {"AppIcon.icns": hashlib.sha256(icon.read_bytes()).hexdigest()},
     "helperHashes": {name: hashlib.sha256((app/"Contents/Helpers"/("nebula-gui-"+name)).read_bytes()).hexdigest() for name in components},
 }
 (app/"Contents/Resources/build-info.json").write_text(json.dumps(manifest, indent=2, sort_keys=True)+"\n")
