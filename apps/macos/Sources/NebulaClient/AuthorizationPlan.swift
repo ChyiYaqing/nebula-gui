@@ -156,6 +156,6 @@ public struct AuthorizationState: Decodable, Sendable {
     public let reason: String?
     public let helperRelease: String?
     public var updateRequired: Bool? = nil
-    public var supportsRecovery: Bool { available && helperRelease == "0.3.0" }
+    public var supportsRecovery: Bool { available && updateRequired == false }
     public static let missing = AuthorizationState(available: false, revision: nil, reason: "not_installed", helperRelease: nil)
 }
