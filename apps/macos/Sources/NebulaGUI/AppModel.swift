@@ -3,6 +3,15 @@ import SwiftUI
 import UniformTypeIdentifiers
 import NebulaClient
 
+/// Only the operations used by the model; production transport retains its own serial queue.
+@MainActor protocol AppBackend {
+    func send<T: Decodable & Sendable>(_ request: BackendRequest, as type: T.Type) async throws -> T
+    func recover() async throws -> ConnectionStatus
+    func shutdown(permanently: Bool) async throws
+    func completeAuthorizedRemoval() async throws
+}
+extension BackendClient: AppBackend {}
+
 @MainActor final class AppModel: ObservableObject {
     @Published var authorization = AuthorizationState.missing
     @Published var showAuthorizationReview = false
@@ -12,8 +21,14 @@ import NebulaClient
     @Published var connectionBusy = false
     @Published var automaticRecovery = true { didSet { recovery.setEnabled(automaticRecovery); recoveryTask?.cancel(); recoveryTask = nil; evaluateRecovery() } }
     @Published var probeAddress = ""
-    @Published var probeResult: NodeProbeResult?
-    @Published var probeBusy = false
+    /// The last node test of this app session, bound to the connection that started it.
+    @Published var probe: NodeProbe?
+    var probeBusy: Bool { probe?.running == true }
+    /// A finished test is shown only while its connection session is still the observed one.
+    var currentProbe: NodeProbe? {
+        guard let probe, status.isStarted, status.profileID == probe.profileID, status.startedAt == probe.startedAt else { return nil }
+        return probe
+    }
     @Published var notificationsBusy = false
     @Published var notificationsEnabled = false
     @Published var notificationText = "到期提醒未开启"
@@ -28,6 +43,8 @@ import NebulaClient
     private var notificationsAllowed = true
     private lazy var certificateNotifications = CertificateNotifications(allowDelivery: notificationsAllowed)
     var canCancelConnection: Bool { connectionBusy || (recovery.desiredProfileID != nil && !recoveryText.isEmpty) }
+    /// The network that automatic recovery targets; status.profileID may already be cleared.
+    var recoveryProfileID: String? { recovery.desiredProfileID }
     private var refreshingStatus = false
     @Published var profiles: [NetworkProfile] = []
     @Published var selectedID: String?
@@ -44,19 +61,38 @@ import NebulaClient
     private var authorizationInProgress = false
     private var files: [String: String] = [:]
     private var timer: Timer?
+    private let client: any AppBackend
+    private let now: () -> Date
+    private let wait: (TimeInterval) async throws -> Void
+    private var servicesEnabled = false
     private var foregroundObserver: NSObjectProtocol?
     private var lastNotificationSync = Date.distantPast
-    private let client: BackendClient
     var selected: NetworkProfile? { profiles.first { $0.id == selectedID } }
     var active: NetworkProfile? { profiles.first { $0.id == status.profileID } }
     var isCurrentStarted: Bool { status.isStarted && status.profileID == selectedID }
+    /// The menu shows the network its primary action targets: the active one while started, else the selection.
+    var menuProfile: NetworkProfile? { status.isStarted ? (active ?? selected) : selected }
+    var connectionActionTitle: String {
+        isCurrentStarted ? "断开连接" : !authorization.available ? "启用连接后台" : status.isStarted ? "切换并连接" : "连接网络"
+    }
+    var menuActionTitle: String {
+        status.isStarted ? "断开连接" : !authorization.available ? "启用连接后台" : "连接所选网络"
+    }
     var statusText: String {
         if busy { return "正在处理" }
         if status.isStarted { return "隧道已启动" }
         if status.state == "failed" { return "连接未完成" }
         return profiles.isEmpty ? "等待导入" : "未连接"
     }
-    init() {
+    /// Isolated model: no polling, environment observers, notifications or transport startup.
+    init(client: any AppBackend, now: @escaping () -> Date = Date.init,
+         wait: @escaping (TimeInterval) async throws -> Void = { seconds in
+             try await Task.sleep(nanoseconds: UInt64(max(0, seconds) * 1_000_000_000))
+         }) {
+        self.client = client; self.now = now; self.wait = wait
+        notificationsAllowed = false
+    }
+    convenience init() {
         let arguments = CommandLine.arguments
         func argument(_ key: String) -> String? {
             guard let index = arguments.firstIndex(of: key), index + 1 < arguments.count else { return nil }
@@ -66,7 +102,8 @@ import NebulaClient
         let store = argument("--data-dir").map { URL(fileURLWithPath: $0) }
             ?? support.appendingPathComponent("NebulaGUI", isDirectory: true)
         let executable = Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/nebula-gui-backend")
-        client = BackendClient(executable: executable, store: store)
+        self.init(client: BackendClient(executable: executable, store: store))
+        servicesEnabled = true
         notificationsAllowed = argument("--data-dir") == nil
         notificationsEnabled = certificateNotifications.enabled
         notificationText = notificationsEnabled ? "已开启 30／7／1 天及到期提醒" : "到期提醒未开启"
@@ -81,6 +118,7 @@ import NebulaClient
         startPolling()
     }
     private func startPolling() {
+        guard servicesEnabled else { return }
         timer?.invalidate()
         timer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in
             Task { @MainActor in
@@ -170,12 +208,12 @@ import NebulaClient
     }
     func connectSelected() async {
         guard !busy, !shuttingDown else { return }
-        if !authorization.available { upgradingAuthorization = false; showAuthorizationReview = true; return }
         if isCurrentStarted { await disconnect(); return }
+        if !authorization.available { upgradingAuthorization = false; showAuthorizationReview = true; return }
         guard let selected else { return }
         recoveryTask?.cancel(); recoveryTask = nil
         let generation = recovery.userConnect(selected.id)
-        busy = true; connectionBusy = true; problem = nil; probeResult = nil
+        busy = true; connectionBusy = true; problem = nil; probe = nil
         defer { if generation == recovery.generation { busy = false; connectionBusy = false; evaluateRecovery() } }
         do {
             if status.state == "failed", transientCodes.contains(status.error?.code ?? "") {
@@ -189,7 +227,7 @@ import NebulaClient
             }
             let connected = try await client.send(BackendRequest(method: "connect", profileID: selected.id), as: ConnectionStatus.self)
             guard generation == recovery.generation, !shuttingDown else { return }
-            status = connected; recovery.observedStarted(at: Date())
+            status = connected; recovery.observedStarted(at: now())
         } catch {
             guard generation == recovery.generation, !shuttingDown else { return }
             setProblem(error)
@@ -206,7 +244,7 @@ import NebulaClient
         do {
             let disconnected = try await client.send(BackendRequest(method: "disconnect"), as: ConnectionStatus.self)
             guard generation == recovery.generation else { return }
-            status = disconnected; problem = nil; probeResult = nil
+            status = disconnected; problem = nil; probe = nil
         } catch {
             guard generation == recovery.generation else { return }
             setProblem(error)
@@ -241,7 +279,11 @@ import NebulaClient
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         busy = true; defer { busy = false }
         do { _ = try await client.send(BackendRequest(method: "remove", profileID: selected.id), as: Acknowledgement.self); await refresh() }
-        catch { setProblem(error) }
+        catch {
+            let issue = error
+            if (issue as? BackendProblem)?.code == "profile_cleanup_pending" { await refresh() }
+            setProblem(issue)
+        }
     }
     func rollbackSelected() async {
         guard let selected, !busy, !shuttingDown else { return }; busy = true; defer { busy = false }
@@ -321,19 +363,30 @@ import NebulaClient
     }
 }
 
+struct NodeProbe: Identifiable {
+    let id = UUID()
+    let address: String
+    let profileID: String
+    let startedAt: String?
+    let generation: UInt64
+    var result: NodeProbeResult?
+    var problem: BackendProblem?
+    var running: Bool { result == nil && problem == nil }
+}
+
 extension AppModel {
     private var transientCodes: [String] { ["backend_stopped", "backend_unavailable", "cleanup_incomplete", "cleanup_pending", "authorization_required", "rebind_failed"] }
     private func evaluateRecovery() {
         guard !shuttingDown else { return }
         if status.isStarted {
-            recovery.observedStarted(at: Date()); recoveryText = ""; return
+            recovery.observedStarted(at: now()); recoveryText = ""; return
         }
         guard recovery.desiredProfileID != nil, automaticRecovery else { recoveryText = ""; return }
         if sleeping { recoveryText = "电脑睡眠期间暂停恢复"; return }
         if !networkAvailable { recoveryText = "系统网络不可用，恢复已暂停"; return }
         guard !busy, !shuttingDown else { return }
         let code = status.error?.code ?? problem?.code ?? "backend_stopped"
-        guard let retry = recovery.schedule(code: code, at: Date()) else {
+        guard let retry = recovery.schedule(code: code, at: now()) else {
             recoveryText = recovery.attempts >= 5 ? "自动恢复已暂停，请手动重新连接" : "请处理提示后手动重新连接"
             return
         }
@@ -341,14 +394,15 @@ extension AppModel {
         guard recoveryTask == nil else { return }
         let scheduledGeneration = recovery.generation
         recoveryTask = Task { [weak self] in
-            let delay = max(0, retry.timeIntervalSinceNow)
-            do { try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000)) } catch { return }
-            guard let self, !Task.isCancelled, self.recovery.generation == scheduledGeneration else { return }
+            guard let self else { return }
+            let delay = max(0, retry.timeIntervalSince(self.now()))
+            do { try await self.wait(delay) } catch { return }
+            guard !Task.isCancelled, self.recovery.generation == scheduledGeneration else { return }
             await self.attemptRecovery()
         }
     }
     private func attemptRecovery() async {
-        guard !busy, !shuttingDown, let attempt = recovery.beginAttempt(at: Date()) else { recoveryTask = nil; return }
+        guard !busy, !shuttingDown, let attempt = recovery.beginAttempt(at: now()) else { recoveryTask = nil; return }
         busy = true; connectionBusy = true; recoveryText = "正在恢复连接，第 \(attempt.number)／5 次"
         defer {
             if attempt.generation == recovery.generation { recoveryTask = nil; busy = false; connectionBusy = false; evaluateRecovery() }
@@ -359,14 +413,14 @@ extension AppModel {
             status = cleared
             let connected = try await client.send(BackendRequest(method: "connect", profileID: attempt.profileID), as: ConnectionStatus.self)
             guard recovery.accepts(attempt), !shuttingDown else { return }
-            status = connected; problem = nil; recovery.observedStarted(at: Date())
+            status = connected; problem = nil; recovery.observedStarted(at: now())
         } catch {
             guard recovery.accepts(attempt), !shuttingDown else { return }
             setProblem(error)
             status = ConnectionStatus(state: "failed", profileID: status.profileID, error: problem, peers: [])
         }
     }
-    private func environmentChanged(_ event: ConnectionEnvironment.Event) {
+    func environmentChanged(_ event: ConnectionEnvironment.Event) {
         guard !shuttingDown else { return }
         switch event {
         case .sleep: sleeping = true; timer?.invalidate()
@@ -377,8 +431,9 @@ extension AppModel {
         recoveryTask?.cancel(); recoveryTask = nil; networkTask?.cancel()
         if sleeping || !networkAvailable { evaluateRecovery(); return }
         networkTask = Task { [weak self] in
-            do { try await Task.sleep(nanoseconds: 1_500_000_000) } catch { return }
-            guard let self, !self.shuttingDown, !self.busy else { return }
+            guard let self else { return }
+            do { try await self.wait(1.5) } catch { return }
+            guard !Task.isCancelled, !self.shuttingDown, !self.busy else { return }
             await self.refreshStatus()
             guard self.status.isStarted, self.authorization.supportsRecovery, !self.busy, !self.shuttingDown else { return }
             let generation = self.recovery.generation
@@ -392,16 +447,23 @@ extension AppModel {
             }
         }
     }
-    func testNode() async {
-        guard !probeBusy, !busy, status.isStarted, !shuttingDown else { return }
-        probeBusy = true; probeResult = nil
-        let generation = recovery.generation
-        defer { probeBusy = false }
+    /// Tests `target`, or the manual address. Only the started, selected network can be probed.
+    func testNode(_ target: String? = nil) async {
+        let address = (target ?? probeAddress).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !probeBusy, !busy, !shuttingDown, !address.isEmpty, isCurrentStarted, let profileID = status.profileID else { return }
+        let started = NodeProbe(address: address, profileID: profileID, startedAt: status.startedAt, generation: recovery.generation)
+        probe = started
+        var outcome = started
         do {
-            let result = try await client.send(BackendRequest(method: "probe", address: probeAddress.trimmingCharacters(in: .whitespacesAndNewlines)), as: NodeProbeResult.self)
-            guard generation == recovery.generation, status.isStarted, !shuttingDown else { return }
-            probeResult = result; problem = nil
-        } catch { if generation == recovery.generation { setProblem(error) } }
+            outcome.result = try await client.send(BackendRequest(method: "probe", address: address), as: NodeProbeResult.self)
+        } catch {
+            // Local feedback only: a probe error must not replace an unrelated connection problem.
+            outcome.problem = error as? BackendProblem ?? BackendProblem(code: "operation_failed", message: "测试未完成，请重试。")
+        }
+        guard probe?.id == started.id else { return }
+        let sameSession = !shuttingDown && started.generation == recovery.generation && status.isStarted
+            && status.profileID == started.profileID && status.startedAt == started.startedAt
+        probe = sameSession ? outcome : nil
     }
     func refreshNotifications() async {
         guard !shuttingDown else { return }
