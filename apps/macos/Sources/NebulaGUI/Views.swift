@@ -121,7 +121,7 @@ struct MainView: View {
                         .disabled(model.busy)
                 }
             }.frame(minHeight: 52)
-            if model.canCancelConnection || (model.status.isStarted && !model.isCurrentStarted) || presentation.tone == .attention {
+            if model.canCancelConnection || (model.status.profileID != nil && model.status.profileID != model.selectedID) || presentation.tone == .attention {
               HStack(alignment: .center, spacing: 8) {
                 Text(presentation.detail).font(.caption).foregroundStyle(.secondary).lineLimit(2)
                     .frame(maxWidth: .infinity, alignment: .leading)

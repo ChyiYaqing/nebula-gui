@@ -60,12 +60,13 @@ import NebulaClient
             }
             if scenario == "empty" { model.profiles = []; model.selectedID = nil }
             if scenario == "missing" || scenario == "unavailable" { model.authorization = .missing }
-            if scenario == "failed" {
+            if scenario == "failed" || scenario == "failed-other" {
                 let error = BackendProblem(code: "cleanup_incomplete", message: "合成错误：连接清理尚未确认，请重试。")
                 model.status = ConnectionStatus(state: "failed", profileID: first.id, error: error, peers: [])
                 model.problem = error
             }
-            if scenario == "recovering" { await model.connectSelected() }
+            if scenario == "recovering" || scenario == "recovering-other" { await model.connectSelected() }
+            if scenario.hasSuffix("-other") { model.selectedID = second.id }
             let baselineCalls = backend.calls
             let page = WorkspacePage(rawValue: option("--page", fallback: "overview")) ?? .overview
             let root: AnyView

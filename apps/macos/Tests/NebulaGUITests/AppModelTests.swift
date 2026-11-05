@@ -73,9 +73,9 @@ import NebulaClient
         }
         return backend
     }
-    func profile(_ id: String) throws -> NetworkProfile {
+    func profile(_ id: String, name: String = "Test") throws -> NetworkProfile {
         let data = Data("""
-        {"id":"\(id)","name":"Test","device":"test","networks":["192.0.2.1/24"],
+        {"id":"\(id)","name":"\(name)","device":"test","networks":["192.0.2.1/24"],
         "fingerprint":"test","expiresAt":"2030-01-01T00:00:00Z","importedAt":"2026-01-01T00:00:00Z",
         "version":"test","digest":"test"}
         """.utf8)
