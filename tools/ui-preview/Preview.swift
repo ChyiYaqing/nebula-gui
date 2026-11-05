@@ -44,13 +44,13 @@ import NebulaClient
                 } catch { fatalError("Unexpected isolation error: \(error)") }
                 await model.manageAuthorization(removing: true)
                 precondition(model.problem?.code == "preview_only" && !model.busy && backend.calls == 0)
+                model.problem = nil
                 await model.setNotifications(true)
-                precondition(model.problem?.code == "preview_only" && !model.notificationsEnabled)
+                precondition(model.problem == nil && model.notificationText == "合成预览不修改系统通知或偏好设置。" && !model.notificationsEnabled)
                 await model.setNotifications(false)
                 precondition(!model.notificationsEnabled && backend.calls == 0)
-                model.problem = nil
                 await model.sendTestNotification()
-                precondition(model.problem?.code == "preview_only" && !model.notificationsBusy && backend.calls == 0)
+                precondition(model.problem == nil && model.notificationText == "合成预览不发送系统通知。" && !model.notificationsBusy && backend.calls == 0)
                 print("PASS preview isolation: authorization runner, uninstall flow, notifications and test notification rejected; no backend calls")
                 app.stop(nil)
                 app.postEvent(NSEvent.otherEvent(with: .applicationDefined, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: 0, context: nil, subtype: 0, data1: 0, data2: 0)!, atStart: false)

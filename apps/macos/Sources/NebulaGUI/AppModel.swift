@@ -485,7 +485,7 @@ extension AppModel {
             try await certificateNotifications.sendTest()
             guard !shuttingDown else { return }
             notificationText = "测试通知已提交，显示方式由系统通知设置决定"
-        } catch { if !shuttingDown { setProblem(error) } }
+        } catch { if !shuttingDown { notificationText = notificationFailure(error) } }
     }
     func setNotifications(_ enabled: Bool) async {
         guard !notificationsBusy, !shuttingDown else { return }
@@ -499,6 +499,10 @@ extension AppModel {
             } else {
                 await certificateNotifications.disable(); notificationsEnabled = false; notificationText = "到期提醒未开启"
             }
-        } catch { setProblem(error) }
+        } catch { if !shuttingDown { notificationText = notificationFailure(error) } }
+    }
+    /// Shown in the notification section only; the next refresh replaces it with the system state.
+    private func notificationFailure(_ error: Error) -> String {
+        (error as? BackendProblem)?.message ?? "通知操作未完成，请重试。"
     }
 }
