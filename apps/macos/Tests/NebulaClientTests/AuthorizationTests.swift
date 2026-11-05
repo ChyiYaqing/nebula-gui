@@ -43,6 +43,15 @@ final class AuthorizationTests: XCTestCase {
         XCTAssertFalse(status.available)
         XCTAssertEqual(status.reason, "not_installed")
     }
+    func testRecoveryFollowsTheBackendReleaseCheck() throws {
+        func state(_ body: String) throws -> AuthorizationState {
+            try Wire.decode(AuthorizationState.self, from: Data(#"{"version":1,"id":"a","result":\#(body)}"#.utf8), requestID: "a")
+        }
+        XCTAssertTrue(try state(#"{"available":true,"helperRelease":"9.9.9","updateRequired":false}"#).supportsRecovery)
+        XCTAssertFalse(try state(#"{"available":true,"helperRelease":"0.3.0","updateRequired":true}"#).supportsRecovery)
+        XCTAssertFalse(try state(#"{"available":true,"helperRelease":"0.3.0"}"#).supportsRecovery)
+        XCTAssertFalse(try state(#"{"available":false,"updateRequired":false}"#).supportsRecovery)
+    }
     func testAbnormalBackendExitIsNotSuccessfulCleanup() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
