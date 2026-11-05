@@ -148,3 +148,16 @@ Go race 全套、27 个 Swift 测试及 4 项 AppKit 退出回归通过。新增
 独立目录执行 scripts/test.sh 通过 Go race、27 个客户端测试、12 个实际模型测试和 4 个 AppKit 退出场景。新增 4 项覆盖授权异常断开、菜单对活动连接的断开、未连接的授权引导，以及断开失败时保留清理不确定状态。最终文字调整后重新执行模型测试。Go vet 在本批次通过。
 
 另编译生产 MainView／MenuContent 与隔离模型，以虚构身份同时展示两处入口，已查看截图确认红色断开按钮。该界面验证不代表实机隧道断开；当前运行的 App 和 root 组件未替换。此分支带入 Issue #2 的测试基础，合并需先处理相应 PR 依赖。安全审查未发现阻断问题。
+
+
+## 2026-11-05 合并前复核与自动合并授权
+
+用户明确授权“MR 验证完可以自动合并到main”。后续在审查问题解决、适用检查通过且验收条件满足后可自动 squash 合并；规则由 Issue #17 跟踪，未完成的实机或技术验证仍保留 Draft。
+
+本次先核对 #9 已合入 main，再分别将最新 main 合入待合并分支，按实际 head 重跑检查：
+
+- #11：head 564a76d，本地 Go race、Go vet、35 个 Swift 测试和 4 个 AppKit 退出场景通过；[远端 CI](https://github.com/ChyiYaqing/nebula-gui/actions/runs/41948502729) 通过后合并，Issue #3 关闭。
+- #10：依赖 #9 已满足，保留其 4 个回归与验证记录，解决重复测试提交的文本冲突；最终增量仍为 4 文件 +77/-8。head c1c83c7 本地 Go race、39 个 Swift 测试和 4 个退出场景通过，[远端 CI](https://github.com/ChyiYaqing/nebula-gui/actions/runs/41949215151) 通过后合并，Issue #1 关闭。
+- #14：更新到包含 #9/#10/#11 的 main，增量仍为 7 文件 +563/-5。head 864ffd4 本地 Go race（含 10 个新增保留/清理测试）、Go vet、39 个 Swift 测试和 4 个退出场景通过，[远端 CI](https://github.com/ChyiYaqing/nebula-gui/actions/runs/41949803490) 通过后合并，Issue #6 关闭。
+
+本轮安全和架构复核无未解决阻断，合并均匹配已验证的 PR head，没有强推或绕过保护规则。#12/#13/#15/#16 保持 Draft：实机中断、Keychain、真实通知和分发门槛尚未满足。本次未替换运行 App、执行真实存储清理、安装系统组件或发布。
