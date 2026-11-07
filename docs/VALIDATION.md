@@ -370,3 +370,14 @@ macOS 13.7.8／x86_64 的 rc1 安装失败：旧 `com.slack.nebula` 正在运行
 原 AuthorizationRunner 丢弃错误，仅返回通用失败。现在 AppleScript 返回版本 1 的 JSON（errorCode），界面分别显示成功、取消、旧服务冲突和其他失败；不解析或回显原始 stderr。安装边界和旧服务保护保持不变，修复后的本机 App 构建号提升为 6，不覆盖已发布 rc1。
 
 真实 AppleScript 退出 73 的回归测试在旧实现上失败，修正后通过。本机旧 Swift 5.9.2 无法编译既有 GUI 并发代码，因此在忽略目录导出实际 NebulaClient 源码和 AuthorizationTests 的隔离 Swift 工程；9 项测试均通过，包含错误码、取消、响应格式和脱敏检查。测试移除了管理员选项，只执行临时 shell 退出命令，没有安装服务。完整测试、打包及本机交接验收另行记录。
+
+托管 [PR CI](https://github.com/ChyiYaqing/nebula-gui/actions/runs/42343433454) 通过 Go race/vet、70 项 Swift、4 项退出场景、预览隔离和空白检查；[Universal 打包与附件传递](https://github.com/ChyiYaqing/nebula-gui/actions/runs/42343433359) 通过。下载后本机复核签名、双架构、完整文件哈希及 build 6 与 manifest 一致。安全／架构专项审查通过。
+
+用户授权后的真实交接（macOS 13.7.8／Intel）：
+
+- 普通用户退出原 App 后替换为已验证的 build 6，原包保留于 `/Applications/.Nebula-build5-backup-issue50.app`。未更改已发布 rc1 附件。
+- 通过 macOS 管理员窗口执行固定服务交接和实际 AuthorizationPlan 安装事务，返回版本 1、errorCode 0。先禁用并卸载旧 `com.slack.nebula`，确认原进程退出，再安装 GUI helper；旧程序和启动项 SHA-256 均未变，不读取或迁移原配置／凭据。
+- `launchctl print-disabled system` 确认旧服务为 disabled，新 helper 为 running；已安装 helper 与 App 包内 SHA-256 相同，签名通过。helper／启动项分别为 root:wheel、0755／0644，运行目录 root、0755，控制 socket 属于登录用户、0600。
+- 普通用户调用受保护的 helper `-health` 成功，认证版本与内核校验通过。重新打开的 GUI 和配置后台均为 uid 501；没有以 root 运行 GUI。
+
+本次实机验收为服务交接、首次安装及认证健康；没有额外执行真实节点连接、睡眠、升级失败回滚或卸载，#4／#8 的其余门槛保持未完成。
