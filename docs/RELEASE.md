@@ -1,6 +1,6 @@
 # macOS Release 打包
 
-Issue #46。参考 [elink-ai Release](https://github.com/ChyiYaqing/elink-ai/blob/main/.github/workflows/release.yml)，使用本仓库已有的 GitHub 托管 `macos-15` runner，不依赖 elink-ci 专用 runner。
+Issue #46／#54。参考 [elink-ai Release](https://github.com/ChyiYaqing/elink-ai/blob/main/.github/workflows/release.yml)。macOS 打包在 MacMini M4 的本仓库专用 runner 上运行，标签为 `[self-hosted, macOS, ARM64, nebula-gui-ci]`；跨 job 附件校验与草稿 Release 写入继续使用 Ubuntu 托管 runner。M4 实例和工作区隔离见 [CI 说明](CI.md)。
 
 ## 触发与产物
 

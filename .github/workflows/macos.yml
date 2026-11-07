@@ -12,25 +12,27 @@ concurrency:
 jobs:
   macos:
     name: macOS build and tests
-    runs-on: macos-15
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, macOS, ARM64, nebula-gui-ci]
     timeout-minutes: 25
     defaults:
       run:
         shell: bash
-        working-directory: nebula-gui
+        working-directory: ${{ github.workspace }}/ci-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}/nebula-gui
     env:
       GOTOOLCHAIN: local
       GOWORK: off
-      NEBULA_GUI_APP_OUTPUT: ${{ github.workspace }}/nebula-gui/build/CI/Nebula.app
+      CI_JOB_ROOT: ${{ github.workspace }}/ci-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+      NEBULA_GUI_APP_OUTPUT: ${{ github.workspace }}/ci-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}/nebula-gui/build/CI/Nebula.app
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          path: nebula-gui
+          path: ci-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}/nebula-gui
           persist-credentials: false
           fetch-depth: 0
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
-          go-version-file: nebula-gui/backend/go.mod
+          go-version-file: ci-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}/nebula-gui/backend/go.mod
           cache: false
       - name: Record toolchain
         run: |
@@ -51,7 +53,7 @@ jobs:
           .build/bin/nebula-ui-preview --scenario connected --page nodes --width 760 --snapshot build/CI/nodes.png
           .build/bin/nebula-ui-preview --scenario unavailable --menu --appearance dark --snapshot build/CI/menu-dark.png
       - name: Go vet
-        working-directory: nebula-gui/backend
+        working-directory: ${{ github.workspace }}/ci-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}/nebula-gui/backend
         run: go vet ./...
       - name: Whitespace check
         env:
@@ -62,3 +64,10 @@ jobs:
           else
             git show --check --oneline HEAD
           fi
+      - name: Remove job workspace
+        if: always()
+        working-directory: ${{ github.workspace }}
+        run: |
+          EXPECTED="$GITHUB_WORKSPACE/ci-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$GITHUB_JOB"
+          [ "$CI_JOB_ROOT" = "$EXPECTED" ]
+          rm -rf -- "$CI_JOB_ROOT"
