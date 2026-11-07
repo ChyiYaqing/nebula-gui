@@ -147,7 +147,27 @@ public struct AuthorizationPlan: Sendable {
             .replacingOccurrences(of: "\"", with: "\\\"")
             .replacingOccurrences(of: "\r", with: "\\r")
             .replacingOccurrences(of: "\n", with: "\\n")
-        return "do shell script \"\(encoded)\" with administrator privileges"
+        return """
+        try
+          do shell script "\(encoded)" with administrator privileges
+          return "{\\"version\\":1,\\"errorCode\\":0}"
+        on error number errorNumber
+          return "{\\"version\\":1,\\"errorCode\\":" & (errorNumber as text) & "}"
+        end try
+        """
+    }
+    public static func validateResult(_ data: Data) throws {
+        struct Reply: Decodable { let version: Int; let errorCode: Int }
+        let failure = BackendProblem(code: "authorization_failed", message: "后台安装、升级或移除失败。升级会尝试恢复旧组件；请刷新状态后检查。")
+        guard let result = try? JSONDecoder().decode(Reply.self, from: data), result.version == 1 else { throw failure }
+        switch result.errorCode {
+        case 0: return
+        case -128:
+            throw BackendProblem(code: "authorization_cancelled", message: "你已取消管理员授权，尚未启用连接后台。")
+        case 73:
+            throw BackendProblem(code: "legacy_service_running", message: "旧 Nebula 服务仍在运行。请先停用旧服务及其自动启动，再启用连接后台；旧配置无需删除。")
+        default: throw failure
+        }
     }
 }
 public struct AuthorizationState: Decodable, Sendable {

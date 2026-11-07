@@ -362,3 +362,11 @@ Codex 对普通用户后台的导入与存储做了只读审查，报告了 5 �
 VERSION 保存完整 RC 版本；tag、文件名、manifest 使用 `0.1.0-rc1`，App 短版本及 manifest 的 applicationVersion 使用 `0.1.0`，build 从 4 提升到 5。helper 发布号保持 0.3.1，未修改协议与连接行为。manifest 额外记录实际包内版本和 build。App 的 NebulaReleaseVersion 保存完整 RC 版本，界面读取此字段显示版本；新增同数字版本但 RC 序号不符的拒绝测试。actionlint、shell 语法与空白检查通过；完整测试和真实包验证由 PR／tag CI 记录。
 
 本次仅发布已合入 main 的内容，其他 Draft PR 未纳入。发布授权不包含安装系统组件或补完 #8／#4 实机门槛；RC 仍为 ad-hoc 签名、未公证测试包。
+
+## 2026-11-07 旧 Nebula 服务阻止安装的提示（Issue #50）
+
+macOS 13.7.8／x86_64 的 rc1 安装失败：旧 `com.slack.nebula` 正在运行，新 helper 尚未安装。只读执行同一 guard 得到退出码 73，App 签名和组件哈希正确。用户随后明确授权停用旧服务及其自动启动、启用 GUI 后台，并修正提示。
+
+原 AuthorizationRunner 丢弃错误，仅返回通用失败。现在 AppleScript 返回版本 1 的 JSON（errorCode），界面分别显示成功、取消、旧服务冲突和其他失败；不解析或回显原始 stderr。安装边界和旧服务保护保持不变，修复后的本机 App 构建号提升为 6，不覆盖已发布 rc1。
+
+真实 AppleScript 退出 73 的回归测试在旧实现上失败，修正后通过。本机旧 Swift 5.9.2 无法编译既有 GUI 并发代码，因此在忽略目录导出实际 NebulaClient 源码和 AuthorizationTests 的隔离 Swift 工程；9 项测试均通过，包含错误码、取消、响应格式和脱敏检查。测试移除了管理员选项，只执行临时 shell 退出命令，没有安装服务。完整测试、打包及本机交接验收另行记录。

@@ -30,7 +30,7 @@ ICONSET="$ROOT/.build/Nebula.iconset"
 python3 - "$APP/Contents/Info.plist" "$APP_VERSION" "$VERSION" <<'PY'
 import plistlib,sys
 with open(sys.argv[1],'wb') as f:
- plistlib.dump({'CFBundleName':'Nebula','CFBundleDisplayName':'Nebula','CFBundleIdentifier':'net.nebula.gui.development','CFBundleExecutable':'NebulaGUI','CFBundlePackageType':'APPL','CFBundleIconFile':'AppIcon.icns','CFBundleShortVersionString':sys.argv[2],'NebulaReleaseVersion':sys.argv[3],'CFBundleVersion':'5','LSMinimumSystemVersion':'13.0','NSHighResolutionCapable':True,'NSSupportsAutomaticTermination':False,'NSHumanReadableCopyright':'Nebula GUI development build'},f)
+ plistlib.dump({'CFBundleName':'Nebula','CFBundleDisplayName':'Nebula','CFBundleIdentifier':'net.nebula.gui.development','CFBundleExecutable':'NebulaGUI','CFBundlePackageType':'APPL','CFBundleIconFile':'AppIcon.icns','CFBundleShortVersionString':sys.argv[2],'NebulaReleaseVersion':sys.argv[3],'CFBundleVersion':'6','LSMinimumSystemVersion':'13.0','NSHighResolutionCapable':True,'NSSupportsAutomaticTermination':False,'NSHumanReadableCopyright':'Nebula GUI development build'},f)
 PY
 codesign --force --sign - "$APP/Contents/Helpers/nebula-gui-backend"
 codesign --force --sign - "$APP/Contents/Helpers/nebula-gui-helper"
