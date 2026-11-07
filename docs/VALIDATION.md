@@ -359,6 +359,6 @@ Codex 对普通用户后台的导入与存储做了只读审查，报告了 5 �
 
 用户明确要求发布 `v0.1.0-rc1`。原工作流的三处版本检查只接受稳定版数字版本，新增回归用例 `test_rc_version_is_accepted` 在旧代码上失败（实际退出 1，应进入后续构建阶段），修正后全部 3 项版本校验测试通过。非法 RC 序号、前导零、额外行及路径字符被拒绝。
 
-VERSION 保存完整 RC 版本；tag、文件名、manifest 使用 `0.1.0-rc1`，App 短版本及 manifest 的 applicationVersion 使用 `0.1.0`，build 从 4 提升到 5。helper 发布号保持 0.3.1，未修改协议与运行时代码。manifest 额外记录实际包内版本和 build。actionlint、shell 语法与空白检查通过；完整测试和真实包验证由 PR／tag CI 记录。
+VERSION 保存完整 RC 版本；tag、文件名、manifest 使用 `0.1.0-rc1`，App 短版本及 manifest 的 applicationVersion 使用 `0.1.0`，build 从 4 提升到 5。helper 发布号保持 0.3.1，未修改协议与连接行为。manifest 额外记录实际包内版本和 build。App 的 NebulaReleaseVersion 保存完整 RC 版本，界面读取此字段显示版本；新增同数字版本但 RC 序号不符的拒绝测试。actionlint、shell 语法与空白检查通过；完整测试和真实包验证由 PR／tag CI 记录。
 
 本次仅发布已合入 main 的内容，其他 Draft PR 未纳入。发布授权不包含安装系统组件或补完 #8／#4 实机门槛；RC 仍为 ad-hoc 签名、未公证测试包。

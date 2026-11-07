@@ -58,6 +58,10 @@ class ReleaseTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "version mismatch"):
             self.inspect(version="999.0.0")
 
+    def test_wrong_rc_version(self):
+        with self.assertRaisesRegex(ValueError, "release version mismatch"):
+            self.inspect(version=VERSION.partition("-")[0] + "-rc999")
+
     def test_wrong_architecture(self):
         with self.assertRaisesRegex(ValueError, "architecture mismatch"):
             self.inspect(architectures=("arm64",))
