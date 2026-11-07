@@ -178,15 +178,40 @@ struct NetworkConfiguration: View {
                     Button("移除网络…", role: .destructive) { Task { await model.removeSelected() } }.tint(.red)
                 }.controlSize(.regular).frame(minHeight: 40).disabled(locked)
             }
-            DisclosureGroup("本次应用会话的连接事件") {
-                if model.events.isEmpty { Text("暂无事件记录").foregroundStyle(.secondary) }
-                ForEach(model.events.reversed()) { event in
-                    HStack(alignment: .top) {
-                        Text(event.title); Spacer(); Text(eventTime(event.time)).foregroundStyle(.secondary)
-                    }.padding(.vertical, 3)
-                }
-            }.font(.caption)
         }
+    }
+}
+
+/// Structured backend events only; kernel log capture is tracked separately (#57).
+struct NetworkLogs: View {
+    @ObservedObject var model: AppModel
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                SectionTitle(title: "连接事件", symbol: "list.bullet.rectangle")
+                Spacer()
+                Text("每 3 秒自动刷新").font(.caption).foregroundStyle(.secondary)
+            }
+            Text("后台本次运行期间最近 100 条结构化事件，最新在上。不含配置、密钥或节点地址。")
+                .font(.caption).foregroundStyle(.secondary)
+            if model.events.isEmpty {
+                Text("暂无事件记录。连接、断开或导入网络后会在这里显示。")
+                    .font(.callout).foregroundStyle(.secondary).padding(.vertical, 8)
+            } else {
+                VStack(spacing: 0) {
+                    ForEach(Array(model.events.reversed().enumerated()), id: \.offset) { index, event in
+                        if index > 0 { Divider() }
+                        HStack(alignment: .firstTextBaseline, spacing: 12) {
+                            Text(eventTime(event.time)).foregroundStyle(.secondary)
+                                .font(.system(size: 11, design: .monospaced))
+                            Text(event.title).font(.system(size: 12))
+                            Spacer(minLength: 8)
+                            Text(event.code).font(.system(size: 11, design: .monospaced)).foregroundStyle(.secondary)
+                        }.padding(.vertical, 6).textSelection(.enabled).accessibilityElement(children: .combine)
+                    }
+                }
+            }
+        }.nebulaSurface()
     }
 }
 

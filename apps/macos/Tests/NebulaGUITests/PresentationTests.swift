@@ -4,6 +4,11 @@ import CoreGraphics
 @testable import NebulaGUI
 
 extension AppModelTests {
+    func testLogsPageIsFourthTabWithCommandFour() {
+        XCTAssertEqual(WorkspacePage.allCases.map(\.title), ["概览", "节点", "配置", "日志"])
+        XCTAssertEqual(WorkspacePage.allCases.map(\.shortcut), ["1", "2", "3", "4"])
+        XCTAssertEqual(WorkspacePage(rawValue: "logs"), .logs)
+    }
     func testOriginalMarkKeepsNodeAndArmOverlapsSolid() {
         let path = NebulaGlyph.path(in: CGRect(x: 0, y: 0, width: 100, height: 100))
         for point in [CGPoint(x: 50, y: 48), CGPoint(x: 20, y: 24), CGPoint(x: 13, y: 24), CGPoint(x: 80, y: 24), CGPoint(x: 87, y: 24),
