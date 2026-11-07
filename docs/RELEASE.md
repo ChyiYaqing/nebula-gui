@@ -12,7 +12,7 @@ tag 流程先执行完整测试与 Go vet，再 release 编译两种架构的 Sw
 
 产物为 `Nebula-vX.Y.Z-macos-universal.dmg`、同名 ZIP、`build-info.json`、`release-notes.md` 和 `SHA256SUMS`。DMG 内包含 App 与 Applications 快捷入口。manifest 记录源码 SHA、工作区是否有未提交改动、固定内核 SHA、工具链和包内文件哈希。打包后重新解压 ZIP、只读挂载 DMG，核对签名、文件哈希、每个组件的两种架构和 Mach-O 最低版本。不会启动 GUI、helper 或安装服务。
 
-仅 tag 事件的独立 job 持有 `contents: write`，下载并核对 artifact 后创建 **Draft prerelease** 并附加产物。PR／手动构建只有读权限，不读取 Apple 证书或其他仓库 secrets。上传使用 GitHub 自动提供的 `GITHUB_TOKEN`。
+独立 Ubuntu job 在所有触发方式下下载 artifact 并核对 SHA256SUMS，验证跨 job 传递后的目录与内容。仅 tag 事件的独立 job 持有 `contents: write`，下载并再次核对 artifact 后创建 **Draft prerelease** 并附加产物。PR／手动构建只有读权限，不读取 Apple 证书或其他仓库 secrets。上传使用 GitHub 自动提供的 `GITHUB_TOKEN`。
 
 ## 下载、重跑与回退
 
