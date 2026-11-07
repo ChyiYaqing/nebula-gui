@@ -1,0 +1,121 @@
+name: macOS Release
+on:
+  push:
+    tags: ['v*']
+  pull_request:
+    paths:
+      - '.github/workflows/release.yml'
+      - 'scripts/**'
+      - 'apps/macos/**'
+      - 'backend/**'
+      - 'VERSION'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  package:
+    name: Universal release package
+    runs-on: macos-15
+    timeout-minutes: 40
+    defaults:
+      run:
+        shell: bash
+        working-directory: nebula-gui
+    env:
+      GOTOOLCHAIN: local
+      GOWORK: off
+      NEBULA_GUI_APP_OUTPUT: ${{ github.workspace }}/nebula-gui/build/ReleaseTests/Nebula.app
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          path: nebula-gui
+          persist-credentials: false
+      - name: Validate tag before building
+        env:
+          RELEASE_REF: ${{ github.ref_name }}
+          RELEASE_EVENT: ${{ github.event_name }}
+        run: |
+          VERSION="$(cat VERSION)"
+          [[ "$VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+          if [[ "$RELEASE_EVENT" == push ]]; then
+            [[ "$RELEASE_REF" == "v$VERSION" ]]
+          fi
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: nebula-gui/backend/go.mod
+          cache: false
+      - name: Fetch reviewed kernel
+        run: bash scripts/prepare-kernel.sh
+      - name: Test tag or manual candidate
+        if: github.event_name != 'pull_request'
+        run: |
+          bash scripts/test.sh
+          (cd backend && go vet ./...)
+      - name: Build and verify Universal archives
+        id: archives
+        run: |
+          bash scripts/package-release.sh
+          python3 scripts/test-release.py
+          echo "directory=nebula-gui/build/Release/v$(cat VERSION)" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: macos-release
+          path: ${{ steps.archives.outputs.directory }}
+          if-no-files-found: error
+          retention-days: 7
+  integrity:
+    name: Release artifact integrity
+    needs: package
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: macos-release
+          path: assets
+      - name: Verify downloaded assets
+        working-directory: assets
+        run: sha256sum --check SHA256SUMS
+  draft:
+    name: Attach assets to draft release
+    needs: integrity
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: macos-release
+          path: assets
+      - name: Create or update draft only
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd assets
+          sha256sum --check SHA256SUMS
+          if gh release view "$RELEASE_TAG" --json isDraft > release-state.json; then
+            jq -e '.isDraft == true' release-state.json > /dev/null || {
+              echo 'Refusing to overwrite a published release' >&2
+              exit 1
+            }
+          else
+            gh release create "$RELEASE_TAG" --verify-tag --draft --prerelease \
+              --title "Nebula GUI $RELEASE_TAG (internal validation)" --notes-file release-notes.md
+          fi
+          gh release upload "$RELEASE_TAG" \
+            "Nebula-$RELEASE_TAG-macos-universal.dmg" \
+            "Nebula-$RELEASE_TAG-macos-universal.zip" \
+            build-info.json release-notes.md SHA256SUMS --clobber

@@ -334,3 +334,23 @@ Codex 对普通用户后台的导入与存储做了只读审查，报告了 5 �
 - `helper.sock` 为 socket、属于 uid 501、权限 0600。
 - 用临时生成的凭据直接向 helper socket 发送 `connect`：主机证书网段为公网（198.51.100.0/24）时返回 `unsupported`（字段 `pki.cert`）；超过 4096 个键的 YAML 对象返回 `invalid_yaml`。两次都返回 `helperRelease=0.3.1`、未启动隧道，也没有出现对应地址的接口。临时凭据已删除。
 - 通过 GUI 连接真实网络，隧道启动并出现 utun；断开后 utun 移除，helper 和 socket 保持正常。
+
+## 2026-11-07 Release 自动打包（Issue #46）
+
+新增独立 macOS Release 工作流：PR 验证 Universal 打包，手动运行仅上传 artifact，版本 tag 校验后创建 Draft prerelease。三个可执行文件均交叉编译 arm64／x86_64，再合并、重新签名，生成 DMG／ZIP、构建信息和校验文件。打包脚本包含解压／挂载回读校验；拒绝测试覆盖版本、架构、部署目标、缺失 helper、符号链接和签名资源修改。
+
+本机：macOS 13.7.8／x86_64，Xcode 15.2／Swift 5.9.2。actionlint 1.7.12、shell 语法、`git diff --check`、tag 不匹配的提前拒绝通过。安全专项只读审查未发现本次引入的高置信问题。
+
+`NEBULA_GUI_APP_OUTPUT=... bash scripts/test.sh` 停在 Swift 编译：`ConnectionEnvironment.swift` 和 `AppModel.swift` 报 `reference to captured var 'self' in concurrently-executing code`。从未修改的 origin/main 导出 Swift 工程到忽略目录，以原构建参数编译，同样失败，确认是本机旧 Swift 对既有代码的兼容限制。没有修改运行时代码绕过错误。
+
+独立 `go test -race -count=1 ./...` 也未通过：本机 Go 标准库缺少依赖所需的 `crypto/mldsa`（工具报告版本与实际标准库不一致）；本地后续 `go vet` 未执行。
+
+托管 runner（macOS 15.8.2／arm64、Xcode 16.4／Swift 6.1.2、Go 1.27.3）已实际通过：
+
+- [完整 PR 检查](https://github.com/ChyiYaqing/nebula-gui/actions/runs/42339254691)：Go race、67 项 Swift 用例、4 项 AppKit 退出、预览隔离、Go vet 与空白检查。
+- [Universal 打包](https://github.com/ChyiYaqing/nebula-gui/actions/runs/42339254935)：三个可执行文件的两种架构及 minos 均为 13.0；签名、ZIP 解压与 DMG 挂载回读通过；7 项拒绝测试通过。manifest 中 sourceDirty=false，源码为 PR merge ref `fe25fc30975b820a07c386564512584d1105feb3`，内核 SHA 与 pin 一致。下载附件后本地复算四个文件的 SHA-256 全部一致。
+- 直接提取工作流中的 draft shell，用明确的 CLI 替身验证不存在／已有草稿／已公开三个分支：仅前两者上传，已公开时拒绝且没有写操作。这是自动化分支验证，未实际创建 Release。
+
+下载检查发现初版 wildcard 上传会保留 `v0.3.1/` 目录，草稿步骤却在下载根目录查找附件。已把上传目标改为精确目录，并增加独立 Ubuntu job，在每次 PR／手动／tag 构建后下载 artifact 并校验 SHA256SUMS，覆盖传递后的目录和校验行为。
+
+未创建 tag／Release，未安装或更换系统组件；#8／#4 的实机分发门槛保持未完成。
