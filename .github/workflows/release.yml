@@ -18,20 +18,22 @@ concurrency:
 jobs:
   package:
     name: Universal release package
-    runs-on: macos-15
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, macOS, ARM64, nebula-gui-ci]
     timeout-minutes: 40
     defaults:
       run:
         shell: bash
-        working-directory: nebula-gui
+        working-directory: ${{ github.workspace }}/ci-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}/nebula-gui
     env:
       GOTOOLCHAIN: local
       GOWORK: off
-      NEBULA_GUI_APP_OUTPUT: ${{ github.workspace }}/nebula-gui/build/ReleaseTests/Nebula.app
+      CI_JOB_ROOT: ${{ github.workspace }}/ci-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+      NEBULA_GUI_APP_OUTPUT: ${{ github.workspace }}/ci-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}/nebula-gui/build/ReleaseTests/Nebula.app
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          path: nebula-gui
+          path: ci-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}/nebula-gui
           persist-credentials: false
       - name: Validate tag before building
         env:
@@ -45,7 +47,7 @@ jobs:
           fi
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
-          go-version-file: nebula-gui/backend/go.mod
+          go-version-file: ci-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}/nebula-gui/backend/go.mod
           cache: false
       - name: Fetch reviewed kernel
         run: bash scripts/prepare-kernel.sh
@@ -59,13 +61,20 @@ jobs:
         run: |
           bash scripts/package-release.sh
           python3 scripts/test-release.py
-          echo "directory=nebula-gui/build/Release/v$(cat VERSION)" >> "$GITHUB_OUTPUT"
+          echo "directory=$CI_JOB_ROOT/nebula-gui/build/Release/v$(cat VERSION)" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: macos-release
           path: ${{ steps.archives.outputs.directory }}
           if-no-files-found: error
           retention-days: 7
+      - name: Remove job workspace
+        if: always()
+        working-directory: ${{ github.workspace }}
+        run: |
+          EXPECTED="$GITHUB_WORKSPACE/ci-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$GITHUB_JOB"
+          [ "$CI_JOB_ROOT" = "$EXPECTED" ]
+          rm -rf -- "$CI_JOB_ROOT"
   integrity:
     name: Release artifact integrity
     needs: package
