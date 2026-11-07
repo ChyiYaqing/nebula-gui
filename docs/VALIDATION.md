@@ -397,6 +397,14 @@ macOS 13.7.8／x86_64 的 rc1 安装失败：旧 `com.slack.nebula` 正在运行
 - 下载产物后 SHA-256 一致，manifest 的内核 pin 正确、sourceDirty=false、源码为 PR merge ref `12de6930988b4ed94b170d5c2c44cd3810d25b89`，工具链为上述 M4 环境。三个可执行文件的 arm64／x86_64 slices 均声明 minos 13.0。
 - SSH 只读确认上述两个 job 目录均已删除，两个 repo 的 Listener 同时保留；没有清理其他工作区，没有在 CI 安装 GUI 或 root helper，没有发布新 Release。SDK／部署目标验证不替代 #8 的最低系统和跨架构运行验收。
 
+## 2026-11-07 日志页与内核日志（Issue #56、#57）
+
+#56 新增「日志」页签；#57 让特权 helper 将 Nebula slog 输出接入白名单环形缓冲，经已认证的控制会话增量返回，普通后台跨会话保留，GUI 仅在日志页打开时读取。helper 发布号 0.3.1 → 0.4.0。设计见 [日常体验](DAILY_USE.md#日志页5657)。
+
+本机（Intel、macOS 13、Swift 5.9.2）：`go vet ./...` 和 `go test -race -count=1 ./...` 通过。新增测试覆盖字段白名单与分组展开、PEM／私钥替换、消息与字段截断、级别过滤与 `SetLevel`、300 条上限与增量游标、helper 转发条目的重新限额与编号、真实内核（config-test 模式）经 handler 输出且不含 PEM、helper 会话增量转发无重复、启动被拒时日志仍随应答返回，以及 `logs` 不进入诊断导出。本机 Swift 5.9.2 编译 main 本身就有 10 个并发捕获错误，因此 Swift 测试与 UI 预览以 M4 CI 为准，结果见 PR。
+
+未执行：真实隧道下查看内核日志、旧 helper 升级到 0.4.0 的实机流程。这些需要管理员授权安装 helper，留待用户授权后验收。
+
 ## 2026-11-08 macOS 13 上 helper 升级失败（Issue #60）
 
 验收 #57 时，在 macOS 13.7.8／Intel 上通过 GUI 把 helper 从 0.3.1 升级到 0.4.0，结果失败，界面只显示通用提示。旧 helper 的 pid 没变，没有残留锁或临时文件。用户手动运行同一份升级脚本（加 `set -x`，并返回错误码），得到退出码 64：脚本已执行到 `launchctl bootout --wait`，随后回滚。用不存在的服务名验证：`launchctl bootout --wait …` 打印用法后以 64 退出，不带 `--wait` 则正常返回 3。该参数从 98da84c 起使用；升级、失败回滚（`|| true` 掩盖了失败）和移除三处都受影响。AUTHORIZATION.md 原先已注明“最低系统版本的实机兼容仍待验证”。

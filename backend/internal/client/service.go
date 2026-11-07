@@ -97,6 +97,12 @@ func (s *Service) invoke(r Request) (any, error) {
 		return AuthorizationStatus{Reason: "not_installed"}, nil
 	case "events":
 		return append([]Event{}, s.events...), nil
+	case "logs":
+		// Live view only: kernel logs stay out of diagnostics, which excludes peer addresses.
+		if source, ok := s.engine.(logSource); ok {
+			return LogPage{Available: true, Entries: source.LogsSince(0)}, nil
+		}
+		return LogPage{Available: false, Entries: []LogEntry{}}, nil
 	case "list":
 		s.prune()
 		return s.store.List()

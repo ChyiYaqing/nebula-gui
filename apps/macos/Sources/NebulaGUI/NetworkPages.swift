@@ -182,10 +182,18 @@ struct NetworkConfiguration: View {
     }
 }
 
-/// Structured backend events only; kernel log capture is tracked separately (#57).
+/// Redacted kernel logs and structured backend events, both refreshed with the status poll.
 struct NetworkLogs: View {
     @ObservedObject var model: AppModel
     var body: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            KernelLogSection(model: model)
+            eventSection
+        }
+        .onAppear { model.showLogs(true) }
+        .onDisappear { model.showLogs(false) }
+    }
+    private var eventSection: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
                 SectionTitle(title: "连接事件", symbol: "list.bullet.rectangle")
@@ -212,6 +220,63 @@ struct NetworkLogs: View {
                 }
             }
         }.nebulaSurface()
+    }
+}
+
+struct KernelLogSection: View {
+    @ObservedObject var model: AppModel
+    private var entries: [KernelLogEntry] { model.kernelLogs?.entries.reversed() ?? [] }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                SectionTitle(title: "Nebula 内核日志", symbol: "terminal")
+                Spacer()
+                Button { copy() } label: { Label("复制", systemImage: "doc.on.doc") }
+                    .disabled(entries.isEmpty).frame(minHeight: 32)
+            }
+            Text("最近 300 条，仅在本机显示，不包含在诊断导出中。证书、数据包等字段不保存，只显示已隐藏的数量。")
+                .font(.caption).foregroundStyle(.secondary)
+            if let page = model.kernelLogs, !page.available {
+                Text(model.authorization.updateRequired == true ? "当前连接后台不提供内核日志，升级连接后台后可查看。" : "当前连接后台不提供内核日志。")
+                    .font(.callout).foregroundStyle(.secondary).padding(.vertical, 8)
+            } else if model.kernelLogs == nil {
+                Text("正在读取…").font(.callout).foregroundStyle(.secondary).padding(.vertical, 8)
+            } else if entries.isEmpty {
+                Text("暂无内核日志。连接网络后，Nebula 的启动、握手和错误信息会显示在这里。")
+                    .font(.callout).foregroundStyle(.secondary).padding(.vertical, 8)
+            } else {
+                VStack(spacing: 0) {
+                    ForEach(Array(entries.enumerated()), id: \.element.id) { index, entry in
+                        if index > 0 { Divider() }
+                        row(entry)
+                    }
+                }
+            }
+        }.nebulaSurface()
+    }
+    private func row(_ entry: KernelLogEntry) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                Text(eventTime(entry.time)).foregroundStyle(.secondary).font(.system(size: 11, design: .monospaced))
+                Text(entry.level.uppercased()).font(.system(size: 10, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(color(entry.level)).frame(width: 44, alignment: .leading)
+                Text(entry.message).font(.system(size: 12))
+            }
+            if !entry.fields.isEmpty || (entry.hidden ?? 0) > 0 {
+                Text(entry.detail + ((entry.hidden ?? 0) > 0 ? "  （另有 \(entry.hidden ?? 0) 个字段已隐藏）" : ""))
+                    .font(.system(size: 11, design: .monospaced)).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }.padding(.vertical, 6).frame(maxWidth: .infinity, alignment: .leading)
+            .textSelection(.enabled).accessibilityElement(children: .combine)
+    }
+    private func color(_ level: String) -> Color {
+        switch level { case "error": return .red; case "warn": return .orange; default: return .secondary }
+    }
+    private func copy() {
+        let text = entries.reversed().map { "\($0.time) \($0.level.uppercased()) \($0.message) \($0.detail)" }.joined(separator: "\n")
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
     }
 }
 

@@ -109,6 +109,27 @@ public struct ConnectionEvent: Decodable, Sendable, Identifiable {
     }
 }
 
+/// Redacted Nebula kernel log, relayed by the backend. Disallowed fields are counted in `hidden`, never sent.
+public struct KernelLogField: Decodable, Sendable, Hashable {
+    public let key: String
+    public let value: String
+}
+public struct KernelLogEntry: Decodable, Sendable, Identifiable {
+    public let seq: UInt64
+    public let time: String
+    public let level: String
+    public let message: String
+    public let fields: [KernelLogField]
+    public let hidden: Int?
+    public var id: UInt64 { seq }
+    /// One line for display and copying, e.g. `error=denied udpAddr=…`.
+    public var detail: String { fields.map { "\($0.key)=\($0.value)" }.joined(separator: " ") }
+}
+public struct KernelLogPage: Decodable, Sendable {
+    public let available: Bool
+    public let entries: [KernelLogEntry]
+}
+
 public struct NodeProbeResult: Decodable, Sendable {
     public let address: String
     public let sent: Int

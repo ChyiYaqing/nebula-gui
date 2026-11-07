@@ -2,6 +2,15 @@ import XCTest
 @testable import NebulaClient
 
 final class ProtocolTests: XCTestCase {
+    func testDecodesKernelLogPage() throws {
+        let data = Data(#"{"version":1,"id":"a","result":{"available":true,"entries":[{"seq":7,"time":"2026-11-07T07:00:00.123456789Z","level":"error","message":"Failed to get a tun/tap device","fields":[{"key":"error","value":"denied"},{"key":"udpAddr","value":"198.51.100.1:4242"}],"hidden":2},{"seq":8,"time":"2026-11-07T07:00:01Z","level":"info","message":"ok","fields":[]}]}}"#.utf8)
+        let page = try Wire.decode(KernelLogPage.self, from: data, requestID: "a")
+        XCTAssertTrue(page.available)
+        XCTAssertEqual(page.entries.map(\.id), [7, 8])
+        XCTAssertEqual(page.entries[0].detail, "error=denied udpAddr=198.51.100.1:4242")
+        XCTAssertEqual(page.entries[0].hidden, 2)
+        XCTAssertNil(page.entries[1].hidden)
+    }
     func testCorrelatedSuccess() throws {
         let data = Data(#"{"version":1,"id":"a","result":[]}"#.utf8)
         let profiles = try Wire.decode([NetworkProfile].self, from: data, requestID: "a")

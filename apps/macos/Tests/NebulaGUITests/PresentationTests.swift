@@ -4,6 +4,27 @@ import CoreGraphics
 @testable import NebulaGUI
 
 extension AppModelTests {
+    func testKernelLogsAreFetchedOnlyWhileTheLogsPageIsOpen() async throws {
+        let backend = controlledBackend(), model = try model(backend)
+        await model.refreshLogs() // Hidden page: ControlledBackend fails on any request.
+        XCTAssertNil(model.kernelLogs)
+        model.logsVisible = true
+        let requested = backend.expect("logs")
+        let task = Task { await model.refreshLogs() }
+        await fulfillment(of: [requested], timeout: 2)
+        try backend.replyJSON("logs", data: Data(#"{"available":true,"entries":[{"seq":1,"time":"2026-11-07T07:00:00Z","level":"warn","message":"Handshake timed out","fields":[{"key":"vpnAddrs","value":"[10.1.0.2]"}],"hidden":1}]}"#.utf8))
+        await task.value
+        XCTAssertEqual(model.kernelLogs?.entries.first?.message, "Handshake timed out")
+        // A failed read keeps the last page and never touches connection state.
+        let again = backend.expect("logs")
+        let failing = Task { await model.refreshLogs() }
+        await fulfillment(of: [again], timeout: 2)
+        backend.fail("logs", code: "storage_error")
+        await failing.value
+        XCTAssertEqual(model.kernelLogs?.entries.count, 1)
+        XCTAssertNil(model.problem)
+        _ = await model.shutdown()
+    }
     func testLogsPageIsFourthTabWithCommandFour() {
         XCTAssertEqual(WorkspacePage.allCases.map(\.title), ["概览", "节点", "配置", "日志"])
         XCTAssertEqual(WorkspacePage.allCases.map(\.shortcut), ["1", "2", "3", "4"])

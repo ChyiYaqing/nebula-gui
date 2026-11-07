@@ -51,7 +51,16 @@ jobs:
           .build/bin/nebula-ui-preview --verify-isolation
           .build/bin/nebula-ui-preview --scenario empty --width 760 --snapshot build/CI/empty.png
           .build/bin/nebula-ui-preview --scenario connected --page nodes --width 760 --snapshot build/CI/nodes.png
+          .build/bin/nebula-ui-preview --scenario connected --page logs --width 760 --snapshot build/CI/logs.png
+          .build/bin/nebula-ui-preview --scenario connected --page logs --appearance dark --snapshot build/CI/logs-dark.png
           .build/bin/nebula-ui-preview --scenario unavailable --menu --appearance dark --snapshot build/CI/menu-dark.png
+      # Synthetic preview data only: no credentials, real addresses or backend calls.
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ui-previews
+          path: ${{ github.workspace }}/ci-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}/nebula-gui/build/CI/*.png
+          if-no-files-found: error
+          retention-days: 7
       - name: Go vet
         working-directory: ${{ github.workspace }}/ci-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}/nebula-gui/backend
         run: go vet ./...

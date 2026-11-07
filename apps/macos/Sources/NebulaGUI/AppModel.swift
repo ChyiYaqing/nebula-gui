@@ -17,6 +17,9 @@ extension BackendClient: AppBackend {}
     @Published var showAuthorizationReview = false
     @Published var removingAuthorization = false
     @Published var events: [ConnectionEvent] = []
+    /// Kernel logs are fetched only while the logs page is open.
+    @Published var kernelLogs: KernelLogPage?
+    var logsVisible = false
     @Published var recoveryText = ""
     @Published var connectionBusy = false
     @Published var automaticRecovery = true { didSet { recovery.setEnabled(automaticRecovery); recoveryTask?.cancel(); recoveryTask = nil; evaluateRecovery() } }
@@ -155,12 +158,24 @@ extension BackendClient: AppBackend {}
             authorization = try await client.send(BackendRequest(method: "authorization"), as: AuthorizationState.self)
             guard generation == recovery.generation, !shuttingDown else { return }
             if showDetails { events = try await client.send(BackendRequest(method: "events"), as: [ConnectionEvent].self) }
+            await refreshLogs()
             if snapshot.isStarted, let code = problem?.code, transientCodes.contains(code) { problem = nil }
         } catch {
             guard generation == recovery.generation, !shuttingDown else { return }
             setProblem(error)
             status = ConnectionStatus(state: "failed", profileID: status.profileID, error: problem, peers: [], startedAt: status.startedAt)
         }
+    }
+    /// Opening the page fetches at once instead of waiting for the next status poll.
+    func showLogs(_ visible: Bool) {
+        logsVisible = visible
+        guard visible, servicesEnabled else { return }
+        Task { await refreshLogs() }
+    }
+    /// A failed log read keeps the previous page; it must not mark the connection as failed.
+    func refreshLogs() async {
+        guard logsVisible, !shuttingDown else { return }
+        if let page = try? await client.send(BackendRequest(method: "logs"), as: KernelLogPage.self) { kernelLogs = page }
     }
     func chooseImport(replacing: String? = nil) {
         guard !shuttingDown, renameTarget == nil else { return }
