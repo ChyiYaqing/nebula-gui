@@ -3,6 +3,39 @@ import XCTest
 @testable import NebulaClient
 
 final class AuthorizationTests: XCTestCase {
+    func testAppleScriptReturnsStructuredFailureWithoutRawOutput() throws {
+        let plan = AuthorizationPlan(script: "printf sensitive-fixture; echo sensitive-fixture >&2; exit 73")
+        let script = plan.appleScript.replacingOccurrences(of: " with administrator privileges", with: "")
+        let process = Process(); let input = Pipe(); let output = Pipe()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+        process.standardInput = input; process.standardOutput = output; process.standardError = FileHandle.nullDevice
+        try process.run()
+        try input.fileHandleForWriting.write(contentsOf: Data(script.utf8))
+        try input.fileHandleForWriting.close()
+        let data = output.fileHandleForReading.readDataToEndOfFile(); process.waitUntilExit()
+        XCTAssertEqual(process.terminationStatus, 0)
+        guard process.terminationStatus == 0 else { return }
+        let result = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Int])
+        XCTAssertEqual(result, ["version": 1, "errorCode": 73])
+        XCTAssertFalse(String(decoding: data, as: UTF8.self).contains("sensitive-fixture"))
+    }
+    func testAuthorizationResultDistinguishesConflictAndCancellation() throws {
+        XCTAssertNoThrow(try AuthorizationPlan.validateResult(Data(#"{"version":1,"errorCode":0}"#.utf8)))
+        for (number, code) in [(73, "legacy_service_running"), (-128, "authorization_cancelled"), (74, "authorization_failed")] {
+            XCTAssertThrowsError(try AuthorizationPlan.validateResult(Data("{\"version\":1,\"errorCode\":\(number)}".utf8))) { error in
+                XCTAssertEqual((error as? BackendProblem)?.code, code)
+                if number == 73 { XCTAssertTrue(error.localizedDescription.contains("旧 Nebula 服务仍在运行")) }
+            }
+        }
+    }
+    func testAuthorizationResultRejectsMalformedOrUnexpectedResponses() throws {
+        for response in ["sensitive-fixture (-128)", #"{"version":2,"errorCode":73}"#, #"{"version":1}"#] {
+            XCTAssertThrowsError(try AuthorizationPlan.validateResult(Data(response.utf8))) { error in
+                XCTAssertEqual((error as? BackendProblem)?.code, "authorization_failed")
+                XCTAssertFalse(error.localizedDescription.contains("sensitive-fixture"))
+            }
+        }
+    }
     func testShellQuotingPreservesUntrustedPathAsLiteral() throws {
         let value = "directory' $(printf injected)\nwith spaces"
         let process = Process(); let output = Pipe()
@@ -28,7 +61,7 @@ final class AuthorizationTests: XCTestCase {
         XCTAssertTrue(plan.script.contains("codesign --verify --strict"))
         XCTAssertTrue(plan.script.contains("sudo -u '#501'"))
         XCTAssertFalse(plan.script.contains("chmod 777"))
-        XCTAssertTrue(plan.appleScript.hasSuffix("with administrator privileges"))
+        XCTAssertTrue(plan.appleScript.contains("with administrator privileges"))
         try checkShellSyntax(plan.script)
         // -n parses only; no installer, administrator dialog, helper, or launchd job is run.
         try checkShellSyntax(AuthorizationPlan.uninstall().script)
