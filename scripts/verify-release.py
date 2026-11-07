@@ -37,7 +37,7 @@ def inspect(app, version, architectures):
             files.add(path.relative_to(app).as_posix())
     require(files == expected, "Unexpected or missing app payload")
     info = plistlib.loads((app / "Contents/Info.plist").read_bytes())
-    require(info["CFBundleShortVersionString"] == version, "App version mismatch")
+    require(info["CFBundleShortVersionString"] == version.partition("-")[0], "App version mismatch")
     require(info["CFBundleExecutable"] == "NebulaGUI", "Unexpected executable")
     require(info["LSMinimumSystemVersion"] == "13.0", "Unexpected deployment target")
     binaries = {}

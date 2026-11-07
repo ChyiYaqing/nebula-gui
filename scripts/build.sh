@@ -3,7 +3,8 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 KERNEL="$ROOT/../nebula"
 VERSION="$(cat "$ROOT/VERSION")"
-[[ "$VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || { echo "Invalid application version" >&2; exit 1; }
+[[ "$VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-rc[1-9][0-9]*)?$ ]] || { echo "Invalid application version" >&2; exit 1; }
+APP_VERSION="${VERSION%%-*}"
 CONFIGURATION="${NEBULA_GUI_BUILD_CONFIGURATION:-debug}"
 case "$CONFIGURATION" in debug|release) ;; *) echo "Invalid build configuration" >&2; exit 1 ;; esac
 ARCH="${NEBULA_GUI_BUILD_ARCH:-$(uname -m)}"
@@ -26,10 +27,10 @@ swiftc -parse-as-library "$ROOT/apps/macos/Sources/NebulaGUI/NebulaMark.swift" "
 ICONSET="$ROOT/.build/Nebula.iconset"
 "$ROOT/.build/bin/generate-icon" "$ICONSET"
 /usr/bin/iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/AppIcon.icns"
-python3 - "$APP/Contents/Info.plist" "$VERSION" <<'PY'
+python3 - "$APP/Contents/Info.plist" "$APP_VERSION" <<'PY'
 import plistlib,sys
 with open(sys.argv[1],'wb') as f:
- plistlib.dump({'CFBundleName':'Nebula','CFBundleDisplayName':'Nebula','CFBundleIdentifier':'net.nebula.gui.development','CFBundleExecutable':'NebulaGUI','CFBundlePackageType':'APPL','CFBundleIconFile':'AppIcon.icns','CFBundleShortVersionString':sys.argv[2],'CFBundleVersion':'4','LSMinimumSystemVersion':'13.0','NSHighResolutionCapable':True,'NSSupportsAutomaticTermination':False,'NSHumanReadableCopyright':'Nebula GUI development build'},f)
+ plistlib.dump({'CFBundleName':'Nebula','CFBundleDisplayName':'Nebula','CFBundleIdentifier':'net.nebula.gui.development','CFBundleExecutable':'NebulaGUI','CFBundlePackageType':'APPL','CFBundleIconFile':'AppIcon.icns','CFBundleShortVersionString':sys.argv[2],'CFBundleVersion':'5','LSMinimumSystemVersion':'13.0','NSHighResolutionCapable':True,'NSSupportsAutomaticTermination':False,'NSHumanReadableCopyright':'Nebula GUI development build'},f)
 PY
 codesign --force --sign - "$APP/Contents/Helpers/nebula-gui-backend"
 codesign --force --sign - "$APP/Contents/Helpers/nebula-gui-helper"

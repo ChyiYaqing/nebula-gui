@@ -2,7 +2,7 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 VERSION="$(cat "$ROOT/VERSION")"
-[[ "$VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || { echo "Invalid application version" >&2; exit 1; }
+[[ "$VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-rc[1-9][0-9]*)?$ ]] || { echo "Invalid application version" >&2; exit 1; }
 TAG="${1:-v$VERSION}"
 [ "$TAG" = "v$VERSION" ] || { echo "Release tag must equal v$VERSION" >&2; exit 1; }
 OUTPUT="$ROOT/build/Release/$TAG"
@@ -40,12 +40,14 @@ python3 "$ROOT/scripts/verify-release.py" "$MOUNT/Nebula.app" "$VERSION" arm64 x
 cmp "$STAGING/universal.json" "$STAGING/dmg.json"
 hdiutil detach "$MOUNT"
 python3 - "$ROOT" "$STAGING" "$OUTPUT" "$VERSION" <<'PY'
-import json, pathlib, subprocess, sys
+import json, pathlib, plistlib, subprocess, sys
 root, staging, output = map(pathlib.Path, sys.argv[1:4])
 def command(*args):
     return subprocess.check_output(args, cwd=root, text=True).strip()
+info = plistlib.loads((staging / "image/Nebula.app/Contents/Info.plist").read_bytes())
 manifest = {
     "schema": 1, "version": sys.argv[4], "distribution": "internal-adhoc",
+    "applicationVersion": info["CFBundleShortVersionString"], "buildNumber": info["CFBundleVersion"],
     "configuration": "release", "sourceRevision": command("git", "rev-parse", "HEAD"),
     "sourceDirty": bool(command("git", "status", "--porcelain")),
     "kernelRevision": (root / "scripts/kernel-revision").read_text().strip(),
@@ -61,7 +63,7 @@ Nebula GUI $TAG — internal validation build
 
 Universal macOS App (arm64 + x86_64), release optimization, declared minimum macOS 13.0.
 Ad-hoc signed; NOT Developer ID signed or notarized. Intel/Apple Silicon and minimum OS installation acceptance is incomplete; see docs/RELEASE.md and Issues #8 / #4.
-This draft is not an approved public Beta. Do not bypass Gatekeeper or SIP. System component installation requires separate user authorization in the GUI.
+This is a testing build; production installation and upgrade acceptance is incomplete. Do not bypass Gatekeeper or SIP. System component installation requires separate user authorization in the GUI.
 
 Source: $(git -C "$ROOT" rev-parse HEAD)
 Kernel: $(cat "$ROOT/scripts/kernel-revision")
