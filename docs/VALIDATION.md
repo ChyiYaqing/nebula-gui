@@ -334,7 +334,8 @@ Codex 对普通用户后台的导入与存储做了只读审查，报告了 5 �
 - `helper.sock` 为 socket、属于 uid 501、权限 0600。
 - 用临时生成的凭据直接向 helper socket 发送 `connect`：主机证书网段为公网（198.51.100.0/24）时返回 `unsupported`（字段 `pki.cert`）；超过 4096 个键的 YAML 对象返回 `invalid_yaml`。两次都返回 `helperRelease=0.3.1`、未启动隧道，也没有出现对应地址的接口。临时凭据已删除。
 - 通过 GUI 连接真实网络，隧道启动并出现 utun；断开后 utun 移除，helper 和 socket 保持正常。
-# 2026-11-07 Release 自动打包（Issue #46，验证中）
+
+## 2026-11-07 Release 自动打包（Issue #46，验证中）
 
 新增独立 macOS Release 工作流：PR 验证 Universal 打包，手动运行仅上传 artifact，版本 tag 校验后创建 Draft prerelease。三个可执行文件均交叉编译 arm64／x86_64，再合并、重新签名，生成 DMG／ZIP、构建信息和校验文件。打包脚本包含解压／挂载回读校验；拒绝测试覆盖版本、架构、部署目标、缺失 helper、符号链接和签名资源修改。
 
@@ -343,4 +344,3 @@ Codex 对普通用户后台的导入与存储做了只读审查，报告了 5 �
 `NEBULA_GUI_APP_OUTPUT=... bash scripts/test.sh` 停在 Swift 编译：`ConnectionEnvironment.swift` 和 `AppModel.swift` 报 `reference to captured var 'self' in concurrently-executing code`。从未修改的 origin/main 导出 Swift 工程到忽略目录，以原构建参数编译，同样失败，确认是本机旧 Swift 对既有代码的兼容限制。没有修改运行时代码绕过错误。
 
 独立 `go test -race -count=1 ./...` 也未通过：本机 Go 标准库缺少依赖所需的 `crypto/mldsa`（工具报告版本与实际标准库不一致）；后续 `go vet` 未执行。完整测试、实际双架构打包和回读仍待托管 runner 验证，不能将脚本实现记为已经通过验收。未创建 tag／Release，未安装或更换系统组件；#8／#4 的实机分发门槛保持未完成。
-
