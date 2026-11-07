@@ -2,7 +2,59 @@
 
 面向普通用户的原生 macOS Nebula 客户端。导入 `config.yaml`、CA 证书、主机证书与密钥后，保存独立副本并通过菜单栏管理连接。后续平台顺序为 iOS、Linux。
 
-**当前候选版本为 v0.1.0-rc1。** 支持配置管理、会话内异常恢复、唤醒后状态同步与网络刷新、节点 ICMP 诊断、证书通知及网络组件升级。此前 v0.2／v0.3.1 为内部开发编号，相关本机验证结果仍见验证记录；本次 App 为 0.1.0/build 5，helper 兼容发布号为 0.3.1。产物为 ad-hoc 签名、未公证的测试包，干净机器和跨系统／架构验收尚未完成。已有组件需在 GUI 选择“升级后台”，主动确认后通过 macOS 系统窗口批准。候选包与触发方式见 [发布说明](docs/RELEASE.md)。
+**当前候选版本为 v0.1.0-rc1。** 支持配置管理、会话内异常恢复、唤醒后状态同步与网络刷新、节点 ICMP 诊断、证书通知及网络组件升级。此前 v0.2／v0.3.1 为内部开发编号，相关本机验证结果仍见验证记录；已发布 rc1 的 App 为 0.1.0/build 5，当前 main 和本机提示修复版为 build 6，helper 兼容发布号均为 0.3.1。产物为 ad-hoc 签名、未公证的测试包，干净机器和跨系统／架构验收尚未完成。已有组件需在 GUI 选择“升级后台”，主动确认后通过 macOS 系统窗口批准。候选包与触发方式见 [发布说明](docs/RELEASE.md)。
+
+## 使用的 Nebula 版本
+
+GUI 将 **Nebula v1.12.0 的 Go 源码库**编译进后台组件，隧道由 helper 进程内的 `NativeEngine` 运行。App 包含 `NebulaGUI`、`nebula-gui-backend`、`nebula-gui-helper` 三个可执行文件，不调用用户另装的 `nebula` CLI，也不依赖 `PATH` 中的 Nebula 程序。
+
+| 项目 | 当前值 | 核对位置 |
+| --- | --- | --- |
+| App 发行标识 | `0.1.0-rc1` | [VERSION](VERSION) |
+| macOS 包版本／构建号 | `0.1.0`；main 为 build `6`，已发布 rc1 为 build `5` | [构建脚本](scripts/build.sh)、对应附件的 `build-info.json` |
+| Nebula 上游版本 | `v1.12.0` | [上游 tag](https://github.com/slackhq/nebula/tree/v1.12.0) |
+| 固定内核提交 | `fb4ef139cbb4af67d142c72083fb735f56460e50` | [kernel-revision](scripts/kernel-revision)、[KernelRevision](backend/internal/client/model.go) |
+| helper 兼容发布号 | `0.3.1` | [HelperRelease](backend/internal/client/privileged_darwin.go) |
+| GUI ↔ backend／backend ↔ helper JSON 协议 | `1` | [GUI 协议](backend/internal/client/model.go)、[helper 协议](backend/internal/client/privileged_darwin.go) |
+| Go 工具链要求 | `1.27.3` | [backend/go.mod](backend/go.mod) |
+
+上游 `v1.12.0` tag 对应的提交与上述 pin 完全一致。构建脚本从 [ChyiYaqing/nebula](https://github.com/ChyiYaqing/nebula) fork 获取该提交，通过 `backend/go.mod` 的本地 `replace` 读取 `../nebula`；其中 `require ... v0.0.0` 是占位依赖，实际源码版本由 pin 和 [内核校验脚本](scripts/verify-kernel.sh)确定。
+
+[隧道启动代码](backend/internal/client/engine.go)传给 Nebula 的运行标识是 `nebula-gui/<KernelRevision>`，配置校验使用 `nebula-gui-validation`。helper 发布号用于判断系统组件是否需要升级，独立于 App 和 Nebula 版本。每次打包的 `build-info.json` 记录 GUI 源码 SHA、内核 SHA、工具链、架构和文件哈希，可核对具体产物；外部 CLI 的 `nebula -version` 显示那份独立程序的版本。
+
+## 运行架构
+
+当前 macOS 实现由三个进程组成，界面使用 SwiftUI／AppKit，两个后台组件使用 Go。Nebula 库用于配置与证书校验，实际隧道运行在 root helper 内，直接调用 `nebula.Main` 和 `nebula.Control` API。
+
+```mermaid
+flowchart TD
+    UI["NebulaGUI · SwiftUI / AppKit<br/>普通用户"]
+    Backend["nebula-gui-backend · Go<br/>普通用户"]
+    Store["受管配置与凭据副本<br/>当前用户私有目录"]
+    Helper["nebula-gui-helper · Go · root<br/>NativeEngine + Nebula v1.12.0 库"]
+    Launchd["macOS launchd<br/>net.nebula.gui.helper"]
+    Network["utun、Nebula 路由<br/>UDP 加密隧道"]
+    UI -->|"stdin / stdout · 逐行 JSON"| Backend
+    Backend -->|"导入、校验、保存、回滚"| Store
+    Backend -->|"Unix socket · JSON<br/>helper.sock · 0600"| Helper
+    UI -.->|"用户批准的安装、升级、移除"| Launchd
+    Launchd -->|"管理进程生命周期"| Helper
+    Helper --> Network
+```
+
+| 组件 | 权限与职责 | 代码入口／安装位置 |
+| --- | --- | --- |
+| GUI | 普通用户；窗口、菜单栏、操作状态、系统通知和管理员授权入口 | [apps/macos](apps/macos)、`Nebula.app/Contents/MacOS/NebulaGUI` |
+| 配置后台 | 普通用户；导入校验、受管存储、配置切换、诊断及 helper 请求 | [backend main](backend/cmd/nebula-gui-backend/main.go)、`Nebula.app/Contents/Helpers/nebula-gui-backend` |
+| 网络 helper | root；再次校验内嵌配置，管理单个隧道、网卡与路由，提供有限状态和控制操作 | [helper main](backend/cmd/nebula-gui-helper/main.go)、`/Library/PrivilegedHelperTools/net.nebula.gui/nebula-gui-helper` |
+
+GUI 按需启动包内配置后台，通过私有进程管道交换带版本和请求 ID 的 JSON。配置后台连接 `/private/var/run/nebula-gui/helper.sock`，双方校验对端 UID，socket 权限为 `0600`，仅授权用户可访问。helper 接受连接、断开、健康、状态、清理确认和网络刷新请求，不接收任意命令或可执行文件路径。安装与移除使用单独的管理员授权事务，见 [授权说明](docs/AUTHORIZATION.md)。
+
+配置后台将独立副本保存在 `~/Library/Application Support/NebulaGUI`，目录权限为 `0700`，凭据配置文件为 `0600`，更新采用版本化保存和原子替换，当前未接入 Keychain。原始导入文件保持不变；helper 在启动前重新校验内嵌配置，并在 root 私有临时目录处理运行材料。
+
+连接时，helper 在本进程中启动 Nebula 内核，创建 `utun` 并安装受管 Nebula 路由。关闭窗口后菜单栏和配置后台继续运行；退出 App 会关闭普通用户后台和控制会话，helper 清理该会话的隧道，LaunchDaemon 自身可保持空闲运行。helper 开机启动不代表自动连接网络。产品仅访问其他 Nebula 节点，连接状态与节点可达性分别展示，节点列表来自本机 HostMap。
+
+工程按 `apps/macos/`（Swift 界面、客户端与测试）、`backend/`（Go 导入、存储、协议与隧道适配）、`scripts/`（构建、测试、打包）、`docs/`（方案与验证）组织。`../nebula` 是只读构建输入，输出写入本仓库的 `.build/` 和 `build/` 忽略目录。iOS／Linux 仍是后续平台，当前图示仅描述已实现的 macOS 路线。
 
 ## 构建与测试
 
