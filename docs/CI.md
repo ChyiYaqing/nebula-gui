@@ -12,7 +12,7 @@ PR 创建、更新、重新打开，以及 main 推送时运行；合并后可�
 
 ## M4 实例与工作区
 
-本仓库 runner 使用独立的 `~/actions-runner-nebula-gui` 目录、`_work` 工作目录与普通用户 LaunchAgent。现有 elink-ai 的 `MacMiniM4` runner 保留原注册、目录与标签；repo 级 runner 不跨仓库共享，两个实例只共享同一台物理机器。
+本仓库 runner 使用独立的 `~/actions-runner-nebula-gui` 目录、`_work` 工作目录与普通用户 LaunchAgent。现有 elink-ai 的 `MacMiniM4` runner 保留原注册、目录与标签；[repo 级 runner 限定单个仓库](https://docs.github.com/en/actions/concepts/runners/self-hosted-runners)。两个实例在同一台物理机器、同一 macOS 账户下运行，目录和注册独立，但没有账户级隔离。
 
 LaunchAgent 在该用户的图形会话启动，主机需保持登录以运行 AppKit 退出探针和原生界面预览。它不安装 Nebula GUI 的网络组件，也不授予 CI 管理员权限。`.github/actionlint.yaml` 声明专用 runner 标签，供工作流静态检查使用。
 

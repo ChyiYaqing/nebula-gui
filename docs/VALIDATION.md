@@ -388,4 +388,11 @@ macOS 13.7.8／x86_64 的 rc1 安装失败：旧 `com.slack.nebula` 正在运行
 
 `MacMiniM4-nebula-gui` 已独立注册、通过普通用户 GUI LaunchAgent 启动并在线，安装目录 0700、注册和认证文件 0600。短期注册 token 通过 SSH stdin/进程环境传入，输出脱敏，未写入仓库或打印认证内容；没有复制 elink-ai 的认证文件。原 elink-ai runner 仍在线，实例目录与标签保持原状。
 
-工作流使用每次 job 独立的检出与兄弟内核目录，完成上传后只清理经完整名称匹配的该目录。直接提取两个工作流的清理脚本执行：正常目录被删除、错误目录被拒绝，四项检查均通过，旁边的模拟用户／其他 job 数据保持不变。actionlint 自定义标签与工作流语法、`git diff --check` 通过。完整 M4 CI 与实际工作区清理结果由本任务 PR 继续验收，不将“runner 在线”当作构建已经通过。
+工作流使用每次 job 独立的检出与兄弟内核目录，完成上传后只清理经完整名称匹配的该目录。直接提取两个工作流的清理脚本执行：正常目录被删除、错误目录被拒绝，四项检查均通过，旁边的模拟用户／其他 job 数据保持不变。actionlint 自定义标签与工作流语法、`git diff --check` 通过，安全和架构专项复核通过。同一 macOS 账户的两个实例没有账户级隔离，主机只运行可信代码。
+
+真实 M4 验证：
+
+- [完整测试](https://github.com/ChyiYaqing/nebula-gui/actions/runs/42347007759)：实际 runner 为 `MacMiniM4-nebula-gui`，Go 1.27.3／darwin-arm64，Go race/vet、32 项 GUI＋38 项客户端 Swift 测试、4 项退出场景和原生预览隔离全部通过。
+- [Universal 打包](https://github.com/ChyiYaqing/nebula-gui/actions/runs/42347007787)：同一 M4 runner，11 项包／版本检查、DMG／ZIP 回读、Ubuntu 附件完整性检查全部通过，PR 的 Release 写入步骤按预期跳过。
+- 下载产物后 SHA-256 一致，manifest 的内核 pin 正确、sourceDirty=false、源码为 PR merge ref `12de6930988b4ed94b170d5c2c44cd3810d25b89`，工具链为上述 M4 环境。三个可执行文件的 arm64／x86_64 slices 均声明 minos 13.0。
+- SSH 只读确认上述两个 job 目录均已删除，两个 repo 的 Listener 同时保留；没有清理其他工作区，没有在 CI 安装 GUI 或 root helper，没有发布新 Release。SDK／部署目标验证不替代 #8 的最低系统和跨架构运行验收。
