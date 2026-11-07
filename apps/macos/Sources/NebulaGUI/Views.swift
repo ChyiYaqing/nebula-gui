@@ -31,6 +31,7 @@ struct MainView: View {
                             case .overview: NetworkOverview(model: model, profile: profile)
                             case .nodes: NetworkNodes(model: model, profile: profile)
                             case .configuration: NetworkConfiguration(model: model, profile: profile)
+                            case .logs: NetworkLogs(model: model)
                             }
                         } else { emptyState }
                     }.padding(24).frame(maxWidth: .infinity, alignment: .leading)
@@ -150,10 +151,10 @@ struct MainView: View {
                         .frame(maxWidth: .infinity, minHeight: 40)
                         .background(page == item ? Palette.accent.opacity(0.12) : .clear, in: Capsule())
                 }.buttonStyle(PressStyle())
-                    .keyboardShortcut(item == .overview ? "1" : item == .nodes ? "2" : "3", modifiers: .command)
+                    .keyboardShortcut(KeyEquivalent(item.shortcut), modifiers: .command)
                     .accessibilityLabel(item.title)
                     .accessibilityAddTraits(page == item ? .isSelected : [])
-                    .help("\(item.title)（⌘\(item == .overview ? "1" : item == .nodes ? "2" : "3")）")
+                    .help("\(item.title)（⌘\(String(item.shortcut))）")
             }
         }.padding(4).background(Palette.surface, in: Capsule())
     }

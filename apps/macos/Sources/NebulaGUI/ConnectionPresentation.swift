@@ -2,14 +2,16 @@ import SwiftUI
 import NebulaClient
 
 enum WorkspacePage: String, CaseIterable, Identifiable {
-    case overview, nodes, configuration
+    case overview, nodes, configuration, logs
     var id: String { rawValue }
     var title: String {
-        switch self { case .overview: return "概览"; case .nodes: return "节点"; case .configuration: return "配置" }
+        switch self { case .overview: return "概览"; case .nodes: return "节点"; case .configuration: return "配置"; case .logs: return "日志" }
     }
     var symbol: String {
-        switch self { case .overview: return "square.grid.2x2"; case .nodes: return "point.3.connected.trianglepath.dotted"; case .configuration: return "slider.horizontal.3" }
+        switch self { case .overview: return "square.grid.2x2"; case .nodes: return "point.3.connected.trianglepath.dotted"; case .configuration: return "slider.horizontal.3"; case .logs: return "list.bullet.rectangle" }
     }
+    /// ⌘1…⌘4 follow the tab order.
+    var shortcut: Character { Character(String((Self.allCases.firstIndex(of: self) ?? 0) + 1)) }
 }
 
 /// A local view projection. Observed tunnel state and reachability remain distinct.
