@@ -6,7 +6,9 @@ Issue #46。参考 [elink-ai Release](https://github.com/ChyiYaqing/elink-ai/blo
 
 `.github/workflows/release.yml` 在相关 PR 上验证打包；Actions 中手动运行 **macOS Release** 会测试当前所选 ref 并生成 `macos-release` artifact，保留 7 天，不创建 Release。日常 `bash scripts/build.sh` 仍默认为当前架构的 debug 构建。
 
-获得单独的发布授权后，维护者更新根目录 `VERSION`（仅 `X.Y.Z`，无前导零）及 `scripts/build.sh` 中的 `CFBundleVersion`，经 PR 合入后再推送对应 `vX.Y.Z` tag。tag 必须与其提交中的 VERSION 一致，否则工作流失败。应用版本与 helper 的 `HelperRelease` 各自管理；helper 行为改变时仍须按 [授权约定](AUTHORIZATION.md) 提升 helper 发布号。本次实现不创建或推送 tag。
+获得单独的发布授权后，维护者更新根目录 `VERSION`（`X.Y.Z` 或 `X.Y.Z-rcN`，无前导零，N 从 1 开始）及 `scripts/build.sh` 中的 `CFBundleVersion`，经 PR 合入后再推送对应 `v${VERSION}` tag。tag 必须与其提交中的 VERSION 一致，否则工作流失败。应用版本与 helper 的 `HelperRelease` 各自管理；helper 行为改变时仍须按 [授权约定](AUTHORIZATION.md) 提升 helper 发布号。
+
+RC tag、附件名和 manifest 的 `version` 保留完整版本，例如 `0.1.0-rc1`；Info.plist 的 `CFBundleShortVersionString` 和 manifest 的 `applicationVersion` 使用 `0.1.0`，符合 [Apple 的三段数字格式](https://developer.apple.com/documentation/bundleresources/information-property-list/cfbundleshortversionstring)。首个候选版本的 build 为 5，helper 兼容发布号保持 0.3.1。
 
 tag 流程先执行完整测试与 Go vet，再 release 编译两种架构的 Swift GUI、Go backend 和 Go helper，将三个可执行文件都合成 Universal 并重新 ad-hoc 签名。构建显式设置 macOS 13.0 部署目标，包括 CGO 编译与链接目标。
 
@@ -19,6 +21,8 @@ tag 流程先执行完整测试与 Go vet，再 release 编译两种架构的 Sw
 在 Actions 运行详情下载 artifact；tag 对应的附件也可在仓库 Releases 的草稿中下载（需要仓库权限）。SHA256SUMS 覆盖 DMG、ZIP、manifest 和说明文本。普通用户不需要运行构建或校验终端命令。
 
 失败后可重跑同一 tag；仅更新已有草稿的附件，不自动公开。已公开 Release 会被拒绝覆写。不要在工作流运行期间手动公开草稿；本工作流不会完成正式发布。需要修正已公开内容时，使用新版本和新 tag，经独立授权后发布。
+
+用户明确要求发布某个版本时，在 tag 工作流完成、附件和校验值核对后，再公开对应草稿为 Prerelease，RC 不设为 Latest。缺少正式签名时，发布说明必须保留 ad-hoc／未公证和实机验收限制；公开候选版本不表示这些门槛已完成。
 
 本地复现：
 

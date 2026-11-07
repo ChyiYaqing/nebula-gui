@@ -2,6 +2,7 @@
 """Negative checks against a real, freshly packaged Universal App."""
 import importlib.util
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -13,6 +14,33 @@ SPEC = importlib.util.spec_from_file_location("verify_release", ROOT / "scripts/
 VERIFY = importlib.util.module_from_spec(SPEC)
 sys.dont_write_bytecode = True
 SPEC.loader.exec_module(VERIFY)
+
+
+class VersionValidationTests(unittest.TestCase):
+    def build_version(self, version):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "scripts").mkdir()
+            shutil.copyfile(ROOT / "scripts/build.sh", root / "scripts/build.sh")
+            (root / "VERSION").write_text(version + "\n")
+            # Stop after production version validation, before compiling anything.
+            (root / "scripts/verify-kernel.sh").write_text("exit 73\n")
+            return subprocess.run(["bash", str(root / "scripts/build.sh")],
+                                  capture_output=True, text=True)
+
+    def test_stable_version_is_accepted(self):
+        self.assertEqual(self.build_version("0.1.0").returncode, 73)
+
+    def test_rc_version_is_accepted(self):
+        self.assertEqual(self.build_version("0.1.0-rc1").returncode, 73)
+
+    def test_invalid_versions_are_rejected(self):
+        for version in ("0.1.0-rc0", "0.1.0-rc01", "00.1.0", "0.1.0-rc", "0.1.0-beta1",
+                        "0.1.0-rc1/../../other", "0.1.0-rc1\nextra"):
+            with self.subTest(version=version):
+                result = self.build_version(version)
+                self.assertEqual(result.returncode, 1)
+                self.assertIn("Invalid application version", result.stderr)
 
 
 class ReleaseTests(unittest.TestCase):
@@ -29,6 +57,10 @@ class ReleaseTests(unittest.TestCase):
     def test_wrong_version(self):
         with self.assertRaisesRegex(ValueError, "version mismatch"):
             self.inspect(version="999.0.0")
+
+    def test_wrong_rc_version(self):
+        with self.assertRaisesRegex(ValueError, "release version mismatch"):
+            self.inspect(version=VERSION.partition("-")[0] + "-rc999")
 
     def test_wrong_architecture(self):
         with self.assertRaisesRegex(ValueError, "architecture mismatch"):
