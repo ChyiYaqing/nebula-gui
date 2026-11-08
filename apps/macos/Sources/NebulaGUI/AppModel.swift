@@ -40,6 +40,8 @@ extension BackendClient: AppBackend {}
         set { defaults.set(newValue, forKey: Self.lastConnectedKey) }
     }
     private static let autoConnectKey = "autoConnectAtLaunch", lastConnectedKey = "lastConnectedProfileID"
+    /// The user's "open at login" choice, kept because the system's record is per build identity (#67).
+    private static let launchAtLoginKey = "launchAtLogin"
     private let defaults: UserDefaults
     private let loginItem: any LoginItemControl
     private var autoConnectAttempted = false
@@ -146,6 +148,7 @@ extension BackendClient: AppBackend {}
         self.loginItem = loginItem ?? UnavailableLoginItem()
         autoConnect = self.defaults.bool(forKey: Self.autoConnectKey)
         loginItemState = self.loginItem.state
+        reconcileLoginItem()
     }
     convenience init() {
         let arguments = CommandLine.arguments
@@ -335,11 +338,27 @@ extension BackendClient: AppBackend {}
     func refreshLoginItem() { loginItemState = loginItem.state }
     func setLaunchAtLogin(_ enabled: Bool) {
         loginItemNotice = nil
+        defaults.set(enabled, forKey: Self.launchAtLoginKey)
         do { try enabled ? loginItem.register() : loginItem.unregister() }
         catch { loginItemNotice = enabled ? "未能设置为登录时打开，请在系统设置的“登录项”中手动添加 Nebula。" : "未能取消登录时打开，请在系统设置的“登录项”中移除 Nebula。" }
         loginItemState = loginItem.state
     }
     func openLoginItemSettings() { loginItem.openSettings() }
+    /// Ad-hoc signed builds get a new identity (cdhash) on every update, so the system
+    /// treats each build as a different, unregistered app (#67). Carry the user's choice
+    /// over by registering the current build; earlier builds' entries cannot be removed
+    /// from here and stay in System Settings until Developer ID signing (#8).
+    private func reconcileLoginItem() {
+        guard defaults.object(forKey: Self.launchAtLoginKey) != nil else {
+            // Migration from builds that only had the system's record: registered means "on".
+            if loginItemState == .enabled || loginItemState == .requiresApproval { defaults.set(true, forKey: Self.launchAtLoginKey) }
+            return
+        }
+        guard defaults.bool(forKey: Self.launchAtLoginKey), loginItemState == .disabled else { return }
+        do { try loginItem.register() }
+        catch { loginItemNotice = "未能为当前版本恢复“登录时打开”，请关闭后重新打开此开关。" }
+        loginItemState = loginItem.state
+    }
     /// Runs once per launch. Never opens the administrator dialog: if the connection
     /// component is missing or outdated it explains why and leaves connecting to the user.
     /// A failed attempt is retried by automatic recovery like any user connection.
