@@ -6,9 +6,10 @@ import UniformTypeIdentifiers
 struct MainView: View {
     @ObservedObject var model: AppModel
     @State private var page: WorkspacePage
+    @State private var visited: Set<WorkspacePage>
     @State private var dropTargeted = false
     init(model: AppModel, page: WorkspacePage = .overview) {
-        self.model = model; _page = State(initialValue: page)
+        self.model = model; _page = State(initialValue: page); _visited = State(initialValue: [page])
     }
     private var presentation: ConnectionPresentation {
         ConnectionPresentation(model: model, profileID: model.selectedID)
@@ -20,22 +21,15 @@ struct MainView: View {
             VStack(spacing: 0) {
                 workspaceHeader
                 Divider()
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 20) {
-                        if let issue = model.problem ?? model.status.error { ProblemView(problem: issue) }
-                        if let profile = model.selected {
-                            if page != .configuration && (!model.authorization.available || model.authorization.updateRequired == true) {
-                                AuthorizationStatusView(model: model)
-                            }
-                            switch page {
-                            case .overview: NetworkOverview(model: model, profile: profile)
-                            case .nodes: NetworkNodes(model: model, profile: profile)
-                            case .configuration: NetworkConfiguration(model: model, profile: profile)
-                            case .logs: NetworkLogs(model: model)
-                            }
-                        } else { emptyState }
-                    }.padding(24).frame(maxWidth: .infinity, alignment: .leading)
-                    .buttonStyle(NebulaButtonStyle())
+                ZStack(alignment: .topLeading) {
+                    // Visited pages stay alive and only change visibility: rebuilding a
+                    // page's view tree on each switch cost ~100 ms on a real Intel iMac.
+                    ForEach(WorkspacePage.allCases.filter { visited.contains($0) }) { item in
+                        pageContent(item)
+                            .opacity(item == page ? 1 : 0)
+                            .allowsHitTesting(item == page)
+                            .accessibilityHidden(item != page)
+                    }
                 }
                 Divider()
                 HStack {
@@ -65,10 +59,32 @@ struct MainView: View {
         .sheet(item: $model.renameTarget) { profile in RenameNetworkView(model: model, profile: profile) }
         .sheet(isPresented: $model.showAuthorizationReview) { AuthorizationReviewView(model: model) }
         .tint(Palette.accent)
+        .onChange(of: page) { item in visited.insert(item); model.showLogs(item == .logs) }
+        .onDisappear { model.showLogs(false) }
         .onAppear {
             if CommandLine.arguments.contains("--show-details") { page = .configuration }
+            visited.insert(page); model.showLogs(page == .logs)
             model.showDetails = true
             snapshotIfRequested()
+        }
+    }
+    private func pageContent(_ item: WorkspacePage) -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                if let issue = model.problem ?? model.status.error { ProblemView(problem: issue) }
+                if let profile = model.selected {
+                    if item != .configuration && (!model.authorization.available || model.authorization.updateRequired == true) {
+                        AuthorizationStatusView(model: model)
+                    }
+                    switch item {
+                    case .overview: NetworkOverview(model: model, profile: profile)
+                    case .nodes: NetworkNodes(model: model, profile: profile)
+                    case .configuration: NetworkConfiguration(model: model, profile: profile)
+                    case .logs: NetworkLogs(model: model)
+                    }
+                } else { emptyState }
+            }.padding(24).frame(maxWidth: .infinity, alignment: .leading)
+            .buttonStyle(NebulaButtonStyle())
         }
     }
     private var sidebar: some View {

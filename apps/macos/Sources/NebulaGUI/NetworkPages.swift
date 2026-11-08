@@ -190,8 +190,6 @@ struct NetworkLogs: View {
             KernelLogSection(model: model)
             eventSection
         }
-        .onAppear { model.showLogs(true) }
-        .onDisappear { model.showLogs(false) }
     }
     private var eventSection: some View {
         VStack(alignment: .leading, spacing: 12) {
