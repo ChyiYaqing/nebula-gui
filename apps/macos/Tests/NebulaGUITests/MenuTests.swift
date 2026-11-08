@@ -57,7 +57,8 @@ extension AppModelTests {
     func testMenuSwitchConnectsTheChosenNetwork() async throws {
         let backend = controlledBackend(), model = try model(backend)
         model.status = try started("first"); model.selectedID = "first"
-        XCTAssertTrue(await model.switchNetwork(to: "first"), "the current network is a no-op")
+        let unchanged = await model.switchNetwork(to: "first")
+        XCTAssertTrue(unchanged, "the current network is a no-op")
         XCTAssertTrue(backend.calls.isEmpty)
         let disconnecting = backend.expect("disconnect"), connecting = backend.expect("connect")
         let task = Task { await model.switchNetwork(to: "second") }
