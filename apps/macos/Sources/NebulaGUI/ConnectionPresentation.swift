@@ -31,7 +31,7 @@ struct ConnectionPresentation {
         if model.connectionBusy {
             title = "正在处理连接"; detail = "正在与连接后台同步，请稍候。"; symbol = "arrow.triangle.2.circlepath"; tone = .neutral
         } else if model.status.isStarted && model.status.profileID == profileID {
-            title = "隧道已启动"; detail = "节点是否可达，请通过实际访问或节点测试确认。"; symbol = "checkmark.circle.fill"; tone = .connected
+            title = "隧道已启动"; detail = "节点是否可达以实际访问为准；节点页显示 ICMP 延迟。"; symbol = "checkmark.circle.fill"; tone = .connected
         } else if model.status.isStarted {
             title = "此网络未连接"; detail = "当前连接：\(model.active?.name ?? "其他网络")"; symbol = "arrow.triangle.swap"; tone = .neutral
         } else if !model.recoveryText.isEmpty, let owner = recoveryOwner, owner != profileID {
@@ -56,4 +56,29 @@ struct ConnectionStatusLabel: View {
             .font(.system(size: 12, weight: .medium)).foregroundStyle(presentation.color)
             .accessibilityElement(children: .combine)
     }
+}
+
+enum MenuIconState: Equatable {
+    case connected, connecting, attention, disconnected
+    var accessibility: String {
+        switch self {
+        case .connected: return "Nebula 隧道已启动"
+        case .connecting: return "Nebula 正在连接或恢复"
+        case .attention: return "Nebula 需要处理"
+        case .disconnected: return "Nebula 未连接"
+        }
+    }
+}
+
+/// "已连接 12 分钟" style duration since the tunnel started; nil when unknown.
+func connectedDuration(since startedAt: String?, now: Date) -> String? {
+    guard let startedAt else { return nil }
+    let fractional = ISO8601DateFormatter(); fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    guard let start = fractional.date(from: startedAt) ?? ISO8601DateFormatter().date(from: startedAt) else { return nil }
+    let minutes = max(0, Int(now.timeIntervalSince(start) / 60))
+    if minutes < 1 { return "刚刚连接" }
+    if minutes < 60 { return "已连接 \(minutes) 分钟" }
+    let hours = minutes / 60, rest = minutes % 60
+    if hours < 24 { return rest == 0 ? "已连接 \(hours) 小时" : "已连接 \(hours) 小时 \(rest) 分钟" }
+    return "已连接 \(hours / 24) 天 \(hours % 24) 小时"
 }
