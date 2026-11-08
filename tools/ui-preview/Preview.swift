@@ -81,6 +81,11 @@ import NebulaClient
                 if scenario == "probe-error" { probe.problem = BackendProblem(code: "probe_rate_limited", message: "合成错误：请稍候再测试节点。") }
                 model.probe = probe; model.probeAddress = "192.0.2.99"
             }
+            if scenario == "logs-upgrade" {
+                model.status = ConnectionStatus(state: "started", profileID: first.id, error: nil, peers: peers, startedAt: "2026-11-05T02:00:00Z")
+                model.authorization = try! JSONDecoder().decode(AuthorizationState.self, from: Data(#"{"available":true,"helperRelease":"0.3.1","updateRequired":true}"#.utf8))
+                model.kernelLogs = try! JSONDecoder().decode(KernelLogPage.self, from: Data(#"{"available":true,"entries":[]}"#.utf8))
+            }
             if scenario == "empty" { model.profiles = []; model.selectedID = nil }
             if scenario == "missing" || scenario == "unavailable" { model.authorization = .missing }
             if scenario == "failed" || scenario == "failed-other" {

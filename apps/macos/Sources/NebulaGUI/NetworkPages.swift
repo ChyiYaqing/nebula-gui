@@ -236,14 +236,8 @@ struct KernelLogSection: View {
             }
             Text("最近 300 条，仅在本机显示，不包含在诊断导出中。证书、数据包等字段不保存，只显示已隐藏的数量。")
                 .font(.caption).foregroundStyle(.secondary)
-            if let page = model.kernelLogs, !page.available {
-                Text(model.authorization.updateRequired == true ? "当前连接后台不提供内核日志，升级连接后台后可查看。" : "当前连接后台不提供内核日志。")
-                    .font(.callout).foregroundStyle(.secondary).padding(.vertical, 8)
-            } else if model.kernelLogs == nil {
-                Text("正在读取…").font(.callout).foregroundStyle(.secondary).padding(.vertical, 8)
-            } else if entries.isEmpty {
-                Text("暂无内核日志。连接网络后，Nebula 的启动、握手和错误信息会显示在这里。")
-                    .font(.callout).foregroundStyle(.secondary).padding(.vertical, 8)
+            if let notice = model.kernelLogNotice {
+                Text(notice).font(.callout).foregroundStyle(.secondary).padding(.vertical, 8)
             } else {
                 VStack(spacing: 0) {
                     ForEach(Array(entries.enumerated()), id: \.element.id) { index, entry in

@@ -25,6 +25,22 @@ extension AppModelTests {
         XCTAssertNil(model.problem)
         _ = await model.shutdown()
     }
+    func testKernelLogNoticeExplainsAnOutdatedHelper() throws {
+        let model = try model(controlledBackend())
+        let decode = { (json: String) in try JSONDecoder().decode(KernelLogPage.self, from: Data(json.utf8)) }
+        XCTAssertEqual(model.kernelLogNotice, "正在读取…")
+        // Real device (#59): an old helper relays nothing, yet the backend reports available.
+        model.kernelLogs = try decode(#"{"available":true,"entries":[]}"#)
+        model.authorization = try JSONDecoder().decode(AuthorizationState.self, from: Data(#"{"available":true,"helperRelease":"0.3.1","updateRequired":true}"#.utf8))
+        XCTAssertEqual(model.kernelLogNotice, "当前连接后台不提供内核日志，升级连接后台后可查看。")
+        model.authorization = try JSONDecoder().decode(AuthorizationState.self, from: Data(#"{"available":true,"updateRequired":false}"#.utf8))
+        XCTAssertEqual(model.kernelLogNotice, "暂无内核日志。连接网络后，Nebula 的启动、握手和错误信息会显示在这里。")
+        model.kernelLogs = try decode(#"{"available":false,"entries":[]}"#)
+        XCTAssertEqual(model.kernelLogNotice, "当前连接后台不提供内核日志。")
+        model.kernelLogs = try decode(#"{"available":true,"entries":[{"seq":1,"time":"2026-11-08T01:00:00Z","level":"info","message":"x","fields":[]}]}"#)
+        model.authorization = try JSONDecoder().decode(AuthorizationState.self, from: Data(#"{"available":true,"updateRequired":true}"#.utf8))
+        XCTAssertNil(model.kernelLogNotice, "entries are shown even while an upgrade is pending")
+    }
     func testLogsPageIsFourthTabWithCommandFour() {
         XCTAssertEqual(WorkspacePage.allCases.map(\.title), ["概览", "节点", "配置", "日志"])
         XCTAssertEqual(WorkspacePage.allCases.map(\.shortcut), ["1", "2", "3", "4"])

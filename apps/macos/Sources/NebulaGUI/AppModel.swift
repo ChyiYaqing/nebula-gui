@@ -166,6 +166,16 @@ extension BackendClient: AppBackend {}
             status = ConnectionStatus(state: "failed", profileID: status.profileID, error: problem, peers: [], startedAt: status.startedAt)
         }
     }
+    /// Empty-state text, or nil when entries exist. An older helper relays no logs
+    /// but the backend cannot tell an empty buffer from a missing capability,
+    /// so a pending component upgrade explains an empty page.
+    var kernelLogNotice: String? {
+        guard let page = kernelLogs else { return "正在读取…" }
+        guard page.entries.isEmpty else { return nil }
+        if authorization.updateRequired == true { return "当前连接后台不提供内核日志，升级连接后台后可查看。" }
+        if !page.available { return "当前连接后台不提供内核日志。" }
+        return "暂无内核日志。连接网络后，Nebula 的启动、握手和错误信息会显示在这里。"
+    }
     /// Opening the page fetches at once instead of waiting for the next status poll.
     func showLogs(_ visible: Bool) {
         logsVisible = visible
