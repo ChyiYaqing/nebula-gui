@@ -61,8 +61,12 @@ struct MainView: View {
         .tint(Palette.accent)
         .onChange(of: page) { item in visited.insert(item); model.showLogs(item == .logs); model.showNodes(item == .nodes) }
         .onDisappear { model.showLogs(false); model.showNodes(false) }
+        .onChange(of: model.requestedPage) { requested in
+            if let requested { page = requested; model.requestedPage = nil }
+        }
         .onAppear {
             if CommandLine.arguments.contains("--show-details") { page = .configuration }
+            if let requested = model.requestedPage { page = requested; model.requestedPage = nil }
             visited.insert(page); model.showLogs(page == .logs); model.showNodes(page == .nodes)
             model.showDetails = true
             snapshotIfRequested()

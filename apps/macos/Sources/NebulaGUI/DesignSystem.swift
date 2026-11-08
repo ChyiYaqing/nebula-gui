@@ -62,11 +62,14 @@ struct NetworkActionButton: View {
     let title: String
     let symbol: String
     let disconnecting: Bool
+    /// The menu bar panel uses a full-width button (#65); the window header keeps its compact size.
+    var expands = false
     let action: () -> Void
     @FocusState private var focused: Bool
     var body: some View {
         Button(role: disconnecting ? .destructive : nil, action: action) {
-            Label(title, systemImage: disconnecting ? "stop.circle" : symbol).frame(minWidth: 122, minHeight: 40)
+            Label(title, systemImage: disconnecting ? "stop.circle" : symbol)
+                .frame(minWidth: 122, maxWidth: expands ? .infinity : nil, minHeight: 40)
         }
         .buttonStyle(ConnectionButtonStyle(destructive: disconnecting))
         .focused($focused)

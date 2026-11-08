@@ -25,6 +25,10 @@ extension BackendClient: AppBackend {}
     /// Addresses whose detailed latency chart is open on the nodes page.
     @Published var latencyExpanded: Set<String> = []
     var nodesVisible = false
+    /// The menu bar panel shows the same latency history (#65).
+    var menuVisible = false
+    /// Asks the main window to switch page, e.g. "view all nodes" from the menu.
+    @Published var requestedPage: WorkspacePage?
     @Published var recoveryText = ""
     @Published var connectionBusy = false
     /// Launch at login (#63): mirrors the system login item; only `setLaunchAtLogin` changes it.
@@ -92,6 +96,25 @@ extension BackendClient: AppBackend {}
     var selected: NetworkProfile? { profiles.first { $0.id == selectedID } }
     var active: NetworkProfile? { profiles.first { $0.id == status.profileID } }
     var isCurrentStarted: Bool { status.isStarted && status.profileID == selectedID }
+    /// Status item state (#65): busy or recovering first, then connected, then anything needing attention.
+    var menuIconState: MenuIconState {
+        if connectionBusy || (recoveryProfileID != nil && !recoveryText.isEmpty) { return .connecting }
+        if status.isStarted { return .connected }
+        if status.state == "failed" || problem != nil || (!profiles.isEmpty && (!authorization.available || authorization.updateRequired == true)) {
+            return .attention
+        }
+        return .disconnected
+    }
+    /// Menu network switch: connects `id`, disconnecting the current network first.
+    /// Returns false when the connection component needs the main window (never prompts here).
+    @discardableResult func switchNetwork(to id: String) async -> Bool {
+        guard !busy, !shuttingDown, profiles.contains(where: { $0.id == id }) else { return true }
+        if status.isStarted && status.profileID == id { return true }
+        selectedID = id
+        guard authorization.available, authorization.updateRequired != true else { return false }
+        await connectSelected()
+        return true
+    }
     /// The menu shows the network its primary action targets: the active one while started, else the selection.
     var menuProfile: NetworkProfile? { status.isStarted ? (active ?? selected) : selected }
     var connectionActionTitle: String {
@@ -231,18 +254,24 @@ extension BackendClient: AppBackend {}
         nodesVisible = visible
         startSampling()
     }
+    func showMenu(_ visible: Bool) {
+        menuVisible = visible
+        startSampling()
+    }
+    /// Sampling runs while either the nodes page or the menu bar panel is visible.
+    private var samplingWanted: Bool { nodesVisible || menuVisible }
     private func startSampling() {
         sampleTimer?.invalidate(); sampleTimer = nil
-        guard nodesVisible, servicesEnabled, !sleeping, !shuttingDown else { return }
+        guard samplingWanted, servicesEnabled, !sleeping, !shuttingDown else { return }
         Task { await sampleLatency() }
         sampleTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
             Task { @MainActor in await self?.sampleLatency() }
         }
     }
     /// One ICMP echo per active peer address. Failures are skipped silently: the
-    /// manual node test and connection state report problems, not the monitor.
+    /// connection state reports problems, not the monitor.
     func sampleLatency() async {
-        guard nodesVisible, !shuttingDown, !sleeping, !sampling, let session = latencySession else { return }
+        guard samplingWanted, !shuttingDown, !sleeping, !sampling, let session = latencySession else { return }
         let targets = LatencyTargets.of(status.peers)
         guard !targets.isEmpty else { return }
         sampling = true; defer { sampling = false }

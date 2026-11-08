@@ -102,7 +102,7 @@ import NebulaClient
                 .environment(\.colorScheme, dark ? .dark : .light)
                 .transaction { if args.contains("--disable-animations") { $0.disablesAnimations = true } })
             let width = args.contains("--menu") ? 356 : max(760, Double(option("--width", fallback: "900")) ?? 900)
-            let height = args.contains("--menu") ? 680.0 : max(570, Double(option("--height", fallback: "720")) ?? 720)
+            let height = max(args.contains("--menu") ? 400 : 570, Double(option("--height", fallback: args.contains("--menu") ? "680" : "720")) ?? 720)
             let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: height),
                 styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
             window.title = "Nebula UI Preview · 合成数据 · 不连接"

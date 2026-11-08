@@ -1,6 +1,19 @@
 import AppKit
 import SwiftUI
 
+/// Kept in this file: scripts/build.sh compiles NebulaMark.swift on its own for the app icon.
+enum MenuIconState: Equatable {
+    case connected, connecting, attention, disconnected
+    var accessibility: String {
+        switch self {
+        case .connected: return "Nebula 隧道已启动"
+        case .connecting: return "Nebula 正在连接或恢复"
+        case .attention: return "Nebula 需要处理"
+        case .disconnected: return "Nebula 未连接"
+        }
+    }
+}
+
 /// Original three-terminal mesh, shared by the app, sidebar and template status item.
 enum NebulaGlyph {
     static func path(in rect: CGRect) -> CGPath {
@@ -30,22 +43,33 @@ enum NebulaGlyph {
         }
         return result
     }
-    static func image(size: CGFloat, connected: Bool) -> NSImage {
+    /// Template status item (#65). Monochrome so it follows the menu bar's appearance:
+    /// connected is solid; disconnected has an open centre; connecting is faded;
+    /// attention adds a separated badge at the top right.
+    static func image(size: CGFloat, state: MenuIconState) -> NSImage {
         let image = NSImage(size: NSSize(width: size, height: size), flipped: true) { rect in
             guard let context = NSGraphicsContext.current?.cgContext else { return false }
             context.saveGState()
-            context.setFillColor(NSColor.black.cgColor)
+            context.setFillColor(NSColor.black.withAlphaComponent(state == .connecting ? 0.45 : 1).cgColor)
             context.addPath(path(in: rect.insetBy(dx: 1, dy: 1)))
             context.fillPath()
-            if !connected {
+            if state != .connected {
                 context.setBlendMode(.clear)
                 context.fillEllipse(in: CGRect(x: rect.midX - 1.4, y: rect.midY - 1.8, width: 2.8, height: 2.8))
+            }
+            if state == .attention {
+                let badge = CGRect(x: rect.maxX - 7, y: rect.minY, width: 7, height: 7)
+                context.setBlendMode(.clear)
+                context.fillEllipse(in: badge.insetBy(dx: -1.5, dy: -1.5)) // Gap separates it from the mark.
+                context.setBlendMode(.normal)
+                context.setFillColor(NSColor.black.cgColor)
+                context.fillEllipse(in: badge)
             }
             context.restoreGState()
             return true
         }
         image.isTemplate = true
-        image.accessibilityDescription = connected ? "Nebula 隧道已启动" : "Nebula 未连接"
+        image.accessibilityDescription = state.accessibility
         return image
     }
 }
