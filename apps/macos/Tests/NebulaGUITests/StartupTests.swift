@@ -17,8 +17,8 @@ import NebulaClient
 }
 
 extension AppModelTests {
-    private func startupModel(_ backend: ControlledBackend, defaults: UserDefaults, loginItem: FakeLoginItem = FakeLoginItem()) throws -> AppModel {
-        let model = AppModel(client: backend, defaults: defaults, loginItem: loginItem)
+    private func startupModel(_ backend: ControlledBackend, defaults: UserDefaults, loginItem: FakeLoginItem? = nil) throws -> AppModel {
+        let model = AppModel(client: backend, defaults: defaults, loginItem: loginItem ?? FakeLoginItem())
         model.profiles = [try profile("first"), try profile("second")]; model.selectedID = "second"
         model.authorization = try JSONDecoder().decode(AuthorizationState.self, from: Data(#"{"available":true,"updateRequired":false}"#.utf8))
         return model
