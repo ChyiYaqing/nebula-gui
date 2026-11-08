@@ -8,7 +8,7 @@ enum LoginItemState: Equatable {
     case disabled
     /// Registered, but the user must allow it in System Settings › General › Login Items.
     case requiresApproval
-    /// Not manageable in this build or context (previews, tests, unsupported install).
+    /// Not manageable in this context: tests, previews and isolated --data-dir runs.
     case unavailable
 }
 
@@ -25,8 +25,9 @@ struct SystemLoginItem: LoginItemControl {
         switch SMAppService.mainApp.status {
         case .enabled: return .enabled
         case .requiresApproval: return .requiresApproval
-        case .notRegistered: return .disabled
-        default: return .unavailable
+        // macOS 13 reports .notFound for a main app that was never registered (seen on
+        // 13.7.8). Offer the switch; a real registration failure shows a notice instead.
+        default: return .disabled
         }
     }
     func register() throws { try SMAppService.mainApp.register() }
