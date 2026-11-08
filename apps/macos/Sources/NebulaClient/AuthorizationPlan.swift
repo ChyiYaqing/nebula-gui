@@ -181,7 +181,7 @@ public struct AuthorizationPlan: Sendable {
         }
     }
 }
-public struct AuthorizationState: Decodable, Sendable {
+public struct AuthorizationState: Decodable, Sendable, Equatable {
     public let available: Bool
     public let revision: String?
     public let reason: String?

@@ -25,8 +25,36 @@ enum Palette {
 struct PressStyle: ButtonStyle {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     func makeBody(configuration: Configuration) -> some View {
-        configuration.label.scaleEffect(configuration.isPressed && !reduceMotion ? 0.97 : 1)
+        // Without a content shape only drawn pixels are clickable: an unselected tab
+        // or sidebar row (clear background) reacted only on its icon and text.
+        configuration.label.contentShape(Rectangle())
+            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.97 : 1)
             .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: configuration.isPressed)
+    }
+}
+
+/// Standard workspace button drawn by SwiftUI. On macOS 13 the system bordered
+/// style is an NSButton whose CoreUI size measurement dominated tab switches on a
+/// real Intel iMac (~38% of main-thread time), so workspace buttons avoid it.
+/// Dialogs keep native buttons for default-button highlighting.
+struct NebulaButtonStyle: ButtonStyle {
+    var prominent = false
+    @Environment(\.isEnabled) private var enabled
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    func makeBody(configuration: Configuration) -> some View {
+        let destructive = configuration.role == .destructive
+        let shape = RoundedRectangle(cornerRadius: Palette.small)
+        configuration.label
+            .font(.system(size: 13, weight: prominent ? .medium : .regular))
+            .padding(.horizontal, 12).frame(minHeight: 28)
+            .foregroundStyle(prominent ? Palette.onAccent : destructive ? Color.red : Color.primary)
+            .background(prominent ? AnyShapeStyle(Palette.accent) : AnyShapeStyle(Color.primary.opacity(configuration.isPressed ? 0.12 : 0.06)), in: shape)
+            .overlay { shape.stroke(prominent ? Color.clear : destructive ? Color.red.opacity(0.35) : Color.primary.opacity(0.14), lineWidth: 1) }
+            .brightness(prominent && configuration.isPressed ? -0.06 : 0)
+            .contentShape(shape)
+            .opacity(enabled ? 1 : 0.45)
+            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.98 : 1)
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.1), value: configuration.isPressed)
     }
 }
 
@@ -76,8 +104,9 @@ struct CopyAddressButton: View {
             Image(systemName: copied ? "checkmark" : "doc.on.doc")
                 .frame(width: 40, height: 40)
                 .foregroundStyle(copied ? Palette.accent : .secondary)
+                .contentShape(Rectangle())
         }
-        .buttonStyle(.borderless)
+        .buttonStyle(PressStyle()) // Not .borderless: that is an NSButton, one per node row.
         .help(copied ? "已复制" : label)
         .accessibilityLabel(copied ? "已复制 \(address)" : label)
         .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: copied)
@@ -105,9 +134,24 @@ extension View {
     }
 }
 
+private enum EventTimeCache {
+    static let fractional: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
+    static let plain = ISO8601DateFormatter()
+    static let style = Date.FormatStyle(date: .abbreviated, time: .standard)
+    static let results: NSCache<NSString, NSString> = { let cache = NSCache<NSString, NSString>(); cache.countLimit = 1000; return cache }()
+}
+
+/// Log and event rows re-render on every poll. Rebuilding two formatters per call
+/// cost ~180 ms per 400 rows on a 2019 Intel iMac, so formatters are shared and
+/// each timestamp is formatted once.
 func eventTime(_ raw: String) -> String {
-    let formatter = ISO8601DateFormatter()
-    formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-    return (formatter.date(from: raw) ?? ISO8601DateFormatter().date(from: raw))?
-        .formatted(date: .abbreviated, time: .standard) ?? raw
+    if let hit = EventTimeCache.results.object(forKey: raw as NSString) { return hit as String }
+    let text = (EventTimeCache.fractional.date(from: raw) ?? EventTimeCache.plain.date(from: raw))
+        .map { $0.formatted(EventTimeCache.style) } ?? raw
+    EventTimeCache.results.setObject(text as NSString, forKey: raw as NSString)
+    return text
 }

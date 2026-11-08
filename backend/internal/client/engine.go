@@ -2,6 +2,7 @@ package client
 
 import (
 	"io"
+	"log/slog"
 	"strings"
 
 	"github.com/slackhq/nebula"
@@ -15,14 +16,31 @@ type Engine interface {
 	Alive() bool
 	Peers() []Peer
 }
-type NativeEngine struct{ control *nebula.Control }
+type NativeEngine struct {
+	control *nebula.Control
+	logs    *logRing
+}
+
+// logSource is implemented by engines that can supply redacted kernel logs.
+type logSource interface{ LogsSince(after uint64) []LogEntry }
+
+// LogsSince keeps returning earlier sessions' entries, so a failed start stays visible.
+func (e *NativeEngine) LogsSince(after uint64) []LogEntry {
+	if e.logs == nil {
+		return []LogEntry{}
+	}
+	return e.logs.since(after)
+}
 
 func (e *NativeEngine) Start(data []byte) error {
 	c := config.NewC(logging.NewLogger(io.Discard))
 	if c.LoadString(string(data)) != nil {
 		return problem("invalid_config", "无法读取受管配置。", "config")
 	}
-	control, err := nebula.Main(c, false, "nebula-gui/"+KernelRevision, logging.NewLogger(io.Discard), nil)
+	if e.logs == nil {
+		e.logs = &logRing{}
+	}
+	control, err := nebula.Main(c, false, "nebula-gui/"+KernelRevision, slog.New(newRingHandler(e.logs)), nil)
 	if err != nil {
 		// Raw kernel errors can contain user-supplied values: never forward them to UI/logs.
 		message := strings.ToLower(err.Error())

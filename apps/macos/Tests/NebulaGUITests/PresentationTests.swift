@@ -1,9 +1,93 @@
 import XCTest
 import NebulaClient
 import CoreGraphics
+import Combine
 @testable import NebulaGUI
 
 extension AppModelTests {
+    func testKernelLogsAreFetchedOnlyWhileTheLogsPageIsOpen() async throws {
+        let backend = controlledBackend(), model = try model(backend)
+        await model.refreshLogs() // Hidden page: ControlledBackend fails on any request.
+        XCTAssertNil(model.kernelLogs)
+        model.logsVisible = true
+        let requested = backend.expect("logs")
+        let task = Task { await model.refreshLogs() }
+        await fulfillment(of: [requested], timeout: 2)
+        try backend.replyJSON("logs", data: Data(#"{"available":true,"entries":[{"seq":1,"time":"2026-11-07T07:00:00Z","level":"warn","message":"Handshake timed out","fields":[{"key":"vpnAddrs","value":"[10.1.0.2]"}],"hidden":1}]}"#.utf8))
+        await task.value
+        XCTAssertEqual(model.kernelLogs?.entries.first?.message, "Handshake timed out")
+        // A failed read keeps the last page and never touches connection state.
+        let again = backend.expect("logs")
+        let failing = Task { await model.refreshLogs() }
+        await fulfillment(of: [again], timeout: 2)
+        backend.fail("logs", code: "storage_error")
+        await failing.value
+        XCTAssertEqual(model.kernelLogs?.entries.count, 1)
+        XCTAssertNil(model.problem)
+        _ = await model.shutdown()
+    }
+    /// Tab switches stuttered on a real Intel iMac: every 3 s poll re-rendered the window even when nothing changed.
+    func testUnchangedPollDoesNotRepublish() async throws {
+        let backend = controlledBackend(), model = try model(backend)
+        var changes = 0
+        let watcher = model.objectWillChange.sink { changes += 1 }
+        defer { watcher.cancel() }
+        func poll(_ status: String) async throws {
+            let statusRequested = backend.expect("status"), authorizationRequested = backend.expect("authorization")
+            let task = Task { await model.refreshStatus() }
+            await fulfillment(of: [statusRequested], timeout: 2)
+            try backend.replyJSON("status", data: Data(status.utf8))
+            await fulfillment(of: [authorizationRequested], timeout: 2)
+            try backend.replyJSON("authorization", data: Data(#"{"available":true}"#.utf8))
+            await task.value
+        }
+        try await poll(#"{"state":"disconnected","peers":[],"observedAt":"2026-11-08T02:00:00Z"}"#)
+        try await poll(#"{"state":"disconnected","peers":[],"observedAt":"2026-11-08T02:00:03Z"}"#)
+        XCTAssertEqual(changes, 0, "only the poll timestamp changed")
+        try await poll(#"{"state":"started","profileID":"first","peers":[],"observedAt":"2026-11-08T02:00:06Z","startedAt":"2026-11-08T02:00:05Z"}"#)
+        XCTAssertGreaterThan(changes, 0)
+        XCTAssertTrue(model.status.isStarted)
+        _ = await model.shutdown()
+    }
+    func testEventTimeIsStableAcrossCachedCalls() {
+        let first = eventTime("2026-11-08T01:52:46.712486Z"), again = eventTime("2026-11-08T01:52:46.712486Z")
+        XCTAssertEqual(first, again)
+        XCTAssertNotEqual(first, "2026-11-08T01:52:46.712486Z", "fractional ISO 8601 parses")
+        XCTAssertNotEqual(eventTime("2026-11-08T01:52:46Z"), "2026-11-08T01:52:46Z", "plain ISO 8601 parses")
+        XCTAssertEqual(eventTime("not a date"), "not a date")
+    }
+    func testOverlappingLiveLogRefreshesSendOneRequest() async throws {
+        let backend = controlledBackend(), model = try model(backend)
+        model.showLogs(true) // Test model: no services, so no timer is started.
+        let requested = backend.expect("logs")
+        let first = Task { await model.refreshLogs() }
+        await fulfillment(of: [requested], timeout: 2)
+        await model.refreshLogs() // The 1 s tick while a read is pending: skipped, no second request.
+        XCTAssertEqual(backend.calls.filter { $0.method == "logs" }.count, 1)
+        try backend.replyJSON("logs", data: Data(#"{"available":true,"entries":[{"seq":1,"time":"2026-11-08T01:00:00Z","level":"info","message":"a","fields":[]},{"seq":2,"time":"2026-11-08T01:00:01Z","level":"info","message":"b","fields":[]}]}"#.utf8))
+        await first.value
+        XCTAssertEqual(model.kernelLogs?.entries.map(\.message), ["a", "b"], "oldest first; the view follows the bottom")
+        model.showLogs(false)
+        await model.refreshLogs()
+        XCTAssertEqual(backend.calls.filter { $0.method == "logs" }.count, 1)
+        _ = await model.shutdown()
+    }
+    func testKernelLogNoticeExplainsAnOutdatedHelper() throws {
+        let model = try model(controlledBackend())
+        let decode = { (json: String) in try JSONDecoder().decode(KernelLogPage.self, from: Data(json.utf8)) }
+        XCTAssertEqual(model.kernelLogNotice, "正在读取…")
+        // Real device (#59): an old helper relays nothing, yet the backend reports available.
+        model.kernelLogs = try decode(#"{"available":true,"entries":[]}"#)
+        model.authorization = try JSONDecoder().decode(AuthorizationState.self, from: Data(#"{"available":true,"helperRelease":"0.3.1","updateRequired":true}"#.utf8))
+        XCTAssertEqual(model.kernelLogNotice, "当前连接后台不提供内核日志，升级连接后台后可查看。")
+        model.authorization = try JSONDecoder().decode(AuthorizationState.self, from: Data(#"{"available":true,"updateRequired":false}"#.utf8))
+        XCTAssertEqual(model.kernelLogNotice, "暂无内核日志。连接网络后，Nebula 的启动、握手和错误信息会显示在这里。")
+        model.kernelLogs = try decode(#"{"available":false,"entries":[]}"#)
+        XCTAssertEqual(model.kernelLogNotice, "当前连接后台不提供内核日志。")
+        model.kernelLogs = try decode(#"{"available":true,"entries":[{"seq":1,"time":"2026-11-08T01:00:00Z","level":"info","message":"x","fields":[]}]}"#)
+        model.authorization = try JSONDecoder().decode(AuthorizationState.self, from: Data(#"{"available":true,"updateRequired":true}"#.utf8))
+        XCTAssertNil(model.kernelLogNotice, "entries are shown even while an upgrade is pending")
+    }
     func testLogsPageIsFourthTabWithCommandFour() {
         XCTAssertEqual(WorkspacePage.allCases.map(\.title), ["概览", "节点", "配置", "日志"])
         XCTAssertEqual(WorkspacePage.allCases.map(\.shortcut), ["1", "2", "3", "4"])

@@ -17,7 +17,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-const HelperRelease = "0.3.1"
+const HelperRelease = "0.4.1"
 
 const HelperSocket = "/private/var/run/nebula-gui/helper.sock"
 const HelperExecutable = "/Library/PrivilegedHelperTools/net.nebula.gui/nebula-gui-helper"
@@ -46,6 +46,8 @@ type helperReply struct {
 	Error         *Problem `json:"error,omitempty"`
 	HelperRelease string   `json:"helperRelease,omitempty"`
 	Clean         bool     `json:"clean,omitempty"`
+	// Logs carries kernel entries produced since the previous reply on this session.
+	Logs []LogEntry `json:"logs,omitempty"`
 }
 
 func peerUID(conn *net.UnixConn) (uint32, error) {
@@ -88,6 +90,7 @@ type PrivilegedEngine struct {
 	nextID        uint64
 	warning       error
 	helperRelease string
+	logs          logRing
 }
 
 func NewPrivilegedEngine() *PrivilegedEngine {
@@ -154,7 +157,27 @@ func (e *PrivilegedEngine) exchange(method, config string) (helperReply, error) 
 		return helperReply{}, helperUnavailable()
 	}
 	e.nextID++
-	return helperExchange(e.conn, e.reader, helperRequest{Version: 1, ID: stringID(e.nextID), Method: method, Config: config})
+	reply, err := helperExchange(e.conn, e.reader, helperRequest{Version: 1, ID: stringID(e.nextID), Method: method, Config: config})
+	// Keep relayed entries even on failure: a rejected connect explains itself here.
+	// The local ring re-sequences and re-bounds them across helper sessions.
+	if reply.ID == stringID(e.nextID) {
+		for _, entry := range reply.Logs {
+			e.logs.add(entry)
+		}
+	}
+	return reply, err
+}
+
+// LogsSince serves the backend's copy, which outlives individual helper sessions.
+func (e *PrivilegedEngine) LogsSince(after uint64) []LogEntry { return e.logs.since(after) }
+
+// PullLogs asks the owning session for entries produced since its last reply,
+// so the live view is not limited to the 3 s status poll. Transport failures
+// are left to that poll, which owns connection failure handling.
+func (e *PrivilegedEngine) PullLogs() {
+	if e.conn != nil && e.helperRelease == HelperRelease {
+		_, _ = e.exchange("status", "")
+	}
 }
 func stringID(n uint64) string { return time.Unix(0, int64(n)).UTC().Format("150405.000000000") }
 func (e *PrivilegedEngine) Start(data []byte) error {
@@ -401,6 +424,7 @@ func (s *HelperServer) handle(conn *net.UnixConn, session uint64) {
 	}
 	reader := bufio.NewReader(conn)
 	var engine Engine
+	var logCursor uint64
 	ownsController := false
 	defer func() {
 		if ownsController {
@@ -418,6 +442,7 @@ func (s *HelperServer) handle(conn *net.UnixConn, session uint64) {
 		}
 		r, err := decodeHelperRequest(data)
 		reply := helperReply{Version: 1, ID: r.ID, Revision: KernelRevision, Peers: []Peer{}, HelperRelease: HelperRelease}
+		logEngine := engine
 		if err != nil {
 			reply.Error = &Problem{Code: "invalid_request", Message: "授权后台拒绝了无效请求。"}
 		} else {
@@ -468,6 +493,7 @@ func (s *HelperServer) handle(conn *net.UnixConn, session uint64) {
 				ownsController = true
 				s.transition.Unlock()
 				engine = s.NewEngine()
+				logEngine = engine
 				candidate, e := validateInline([]byte(r.Config), s.TemporaryRoot)
 				if e == nil {
 					e = engine.Start(candidate.Config)
@@ -494,6 +520,13 @@ func (s *HelperServer) handle(conn *net.UnixConn, session uint64) {
 					ownsController = false
 					s.controller.Unlock()
 				}
+			}
+		}
+		// Only this session's engine is read: logs never cross controller sessions.
+		if source, ok := logEngine.(logSource); ok {
+			reply.Logs = source.LogsSince(logCursor)
+			if n := len(reply.Logs); n > 0 {
+				logCursor = reply.Logs[n-1].Seq
 			}
 		}
 		_ = conn.SetWriteDeadline(time.Now().Add(5 * time.Second))

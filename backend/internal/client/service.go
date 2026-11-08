@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/netip"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 )
@@ -66,7 +67,30 @@ func (s *Service) status() Status {
 	if s.failure != nil {
 		state = "failed"
 	}
-	return Status{State: state, ProfileID: s.active, Error: s.failure, Peers: s.engine.Peers(), StartedAt: s.startedAt, ObservedAt: time.Now().UTC()}
+	return Status{State: state, ProfileID: s.active, Error: s.failure, Peers: sortedPeers(s.engine.Peers()), StartedAt: s.startedAt, ObservedAt: time.Now().UTC()}
+}
+
+// sortedPeers gives a stable order: the kernel lists hosts by Go map iteration,
+// so an unchanged hostmap would otherwise look changed on every 3 s poll and
+// re-render the GUI. Established tunnels first, then by address and name.
+func sortedPeers(peers []Peer) []Peer {
+	key := func(p Peer) string {
+		if len(p.Addresses) == 0 {
+			return ""
+		}
+		return p.Addresses[0]
+	}
+	sort.SliceStable(peers, func(i, j int) bool {
+		a, b := peers[i], peers[j]
+		if a.Pending != b.Pending {
+			return !a.Pending
+		}
+		if ka, kb := key(a), key(b); ka != kb {
+			return ka < kb
+		}
+		return a.Name < b.Name
+	})
+	return peers
 }
 func (s *Service) Handle(r Request) Response {
 	res := Response{Version: ProtocolVersion, ID: r.ID}
@@ -97,6 +121,15 @@ func (s *Service) invoke(r Request) (any, error) {
 		return AuthorizationStatus{Reason: "not_installed"}, nil
 	case "events":
 		return append([]Event{}, s.events...), nil
+	case "logs":
+		// Live view only: kernel logs stay out of diagnostics, which excludes peer addresses.
+		if source, ok := s.engine.(logSource); ok {
+			if puller, ok := s.engine.(interface{ PullLogs() }); ok {
+				puller.PullLogs()
+			}
+			return LogPage{Available: true, Entries: source.LogsSince(0)}, nil
+		}
+		return LogPage{Available: false, Entries: []LogEntry{}}, nil
 	case "list":
 		s.prune()
 		return s.store.List()

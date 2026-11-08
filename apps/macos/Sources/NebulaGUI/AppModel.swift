@@ -17,6 +17,9 @@ extension BackendClient: AppBackend {}
     @Published var showAuthorizationReview = false
     @Published var removingAuthorization = false
     @Published var events: [ConnectionEvent] = []
+    /// Kernel logs are fetched only while the logs page is open.
+    @Published var kernelLogs: KernelLogPage?
+    var logsVisible = false
     @Published var recoveryText = ""
     @Published var connectionBusy = false
     @Published var automaticRecovery = true { didSet { recovery.setEnabled(automaticRecovery); recoveryTask?.cancel(); recoveryTask = nil; evaluateRecovery() } }
@@ -64,6 +67,9 @@ extension BackendClient: AppBackend {}
     private var authorizationInProgress = false
     private var files: [String: String] = [:]
     private var timer: Timer?
+    /// Live kernel log polling, running only while the logs page is open.
+    private var logTimer: Timer?
+    private var refreshingLogs = false
     private let client: any AppBackend
     private let now: () -> Date
     private let wait: (TimeInterval) async throws -> Void
@@ -151,16 +157,50 @@ extension BackendClient: AppBackend {}
         do {
             let snapshot = try await client.send(BackendRequest(method: "status"), as: ConnectionStatus.self)
             guard generation == recovery.generation, !shuttingDown else { return }
-            status = snapshot
-            authorization = try await client.send(BackendRequest(method: "authorization"), as: AuthorizationState.self)
+            // Publish only real changes: every assignment re-renders the whole window.
+            if !snapshot.sameObservation(as: status) { status = snapshot }
+            let currentAuthorization = try await client.send(BackendRequest(method: "authorization"), as: AuthorizationState.self)
             guard generation == recovery.generation, !shuttingDown else { return }
-            if showDetails { events = try await client.send(BackendRequest(method: "events"), as: [ConnectionEvent].self) }
+            if currentAuthorization != authorization { authorization = currentAuthorization }
+            if showDetails {
+                let currentEvents = try await client.send(BackendRequest(method: "events"), as: [ConnectionEvent].self)
+                if currentEvents != events { events = currentEvents }
+            }
             if snapshot.isStarted, let code = problem?.code, transientCodes.contains(code) { problem = nil }
         } catch {
             guard generation == recovery.generation, !shuttingDown else { return }
             setProblem(error)
             status = ConnectionStatus(state: "failed", profileID: status.profileID, error: problem, peers: [], startedAt: status.startedAt)
         }
+    }
+    /// Empty-state text, or nil when entries exist. An older helper relays no logs
+    /// but the backend cannot tell an empty buffer from a missing capability,
+    /// so a pending component upgrade explains an empty page.
+    var kernelLogNotice: String? {
+        guard let page = kernelLogs else { return "正在读取…" }
+        guard page.entries.isEmpty else { return nil }
+        if authorization.updateRequired == true { return "当前连接后台不提供内核日志，升级连接后台后可查看。" }
+        if !page.available { return "当前连接后台不提供内核日志。" }
+        return "暂无内核日志。连接网络后，Nebula 的启动、握手和错误信息会显示在这里。"
+    }
+    /// While the logs page is open, kernel logs are fetched at once and then every second.
+    func showLogs(_ visible: Bool) {
+        logsVisible = visible
+        startLogPolling()
+    }
+    private func startLogPolling() {
+        logTimer?.invalidate(); logTimer = nil
+        guard logsVisible, servicesEnabled, !sleeping, !shuttingDown else { return }
+        Task { await refreshLogs() }
+        logTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+            Task { @MainActor in await self?.refreshLogs() }
+        }
+    }
+    /// A failed log read keeps the previous page; it must not mark the connection as failed.
+    func refreshLogs() async {
+        guard logsVisible, !shuttingDown, !sleeping, !refreshingLogs else { return }
+        refreshingLogs = true; defer { refreshingLogs = false }
+        if let page = try? await client.send(BackendRequest(method: "logs"), as: KernelLogPage.self), page != kernelLogs { kernelLogs = page }
     }
     func chooseImport(replacing: String? = nil) {
         guard !shuttingDown, renameTarget == nil else { return }
@@ -353,7 +393,7 @@ extension BackendClient: AppBackend {}
         }
         shuttingDown = true
         recovery.userDisconnect(); recoveryTask?.cancel(); recoveryTask = nil; networkTask?.cancel(); recoveryText = ""
-        timer?.invalidate()
+        timer?.invalidate(); logTimer?.invalidate(); logTimer = nil
         do {
             try await client.shutdown(permanently: true); environmentMonitor?.stop()
             if let foregroundObserver { NotificationCenter.default.removeObserver(foregroundObserver); self.foregroundObserver = nil }
@@ -379,21 +419,23 @@ struct NodeProbe: Identifiable {
 
 extension AppModel {
     private var transientCodes: [String] { ["backend_stopped", "backend_unavailable", "cleanup_incomplete", "cleanup_pending", "authorization_required", "rebind_failed"] }
+    /// Runs after every 3 s poll; assigning an unchanged @Published value still re-renders the window.
+    private func showRecovery(_ text: String) { if recoveryText != text { recoveryText = text } }
     private func evaluateRecovery() {
         guard !shuttingDown else { return }
         if status.isStarted {
-            recovery.observedStarted(at: now()); recoveryText = ""; return
+            recovery.observedStarted(at: now()); showRecovery(""); return
         }
-        guard recovery.desiredProfileID != nil, automaticRecovery else { recoveryText = ""; return }
-        if sleeping { recoveryText = "电脑睡眠期间暂停恢复"; return }
-        if !networkAvailable { recoveryText = "系统网络不可用，恢复已暂停"; return }
+        guard recovery.desiredProfileID != nil, automaticRecovery else { showRecovery(""); return }
+        if sleeping { showRecovery("电脑睡眠期间暂停恢复"); return }
+        if !networkAvailable { showRecovery("系统网络不可用，恢复已暂停"); return }
         guard !busy, !shuttingDown else { return }
         let code = status.error?.code ?? problem?.code ?? "backend_stopped"
         guard let retry = recovery.schedule(code: code, at: now()) else {
-            recoveryText = recovery.attempts >= 5 ? "自动恢复已暂停，请手动重新连接" : "请处理提示后手动重新连接"
+            showRecovery(recovery.attempts >= 5 ? "自动恢复已暂停，请手动重新连接" : "请处理提示后手动重新连接")
             return
         }
-        recoveryText = "等待自动恢复，第 \(recovery.attempts + 1)／5 次"
+        showRecovery("等待自动恢复，第 \(recovery.attempts + 1)／5 次")
         guard recoveryTask == nil else { return }
         let scheduledGeneration = recovery.generation
         recoveryTask = Task { [weak self] in
@@ -426,8 +468,8 @@ extension AppModel {
     func environmentChanged(_ event: ConnectionEnvironment.Event) {
         guard !shuttingDown else { return }
         switch event {
-        case .sleep: sleeping = true; timer?.invalidate()
-        case .wake: sleeping = false; startPolling()
+        case .sleep: sleeping = true; timer?.invalidate(); logTimer?.invalidate(); logTimer = nil
+        case .wake: sleeping = false; startPolling(); startLogPolling()
         case .network(let available): networkAvailable = available
         }
         recovery.environment(sleeping: sleeping, networkAvailable: networkAvailable)
