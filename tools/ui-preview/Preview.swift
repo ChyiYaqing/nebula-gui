@@ -51,7 +51,9 @@ import NebulaClient
                 precondition(!model.notificationsEnabled && backend.calls == 0)
                 await model.sendTestNotification()
                 precondition(model.problem == nil && model.notificationText == "合成预览不发送系统通知。" && !model.notificationsBusy && backend.calls == 0)
-                print("PASS preview isolation: authorization runner, uninstall flow, notifications and test notification rejected; no backend calls")
+                model.setLaunchAtLogin(true)
+                precondition(model.loginItemState == .unavailable && model.loginItemNotice != nil && backend.calls == 0)
+                print("PASS preview isolation: authorization runner, uninstall flow, notifications, test notification and login item rejected; no backend calls")
                 app.stop(nil)
                 app.postEvent(NSEvent.otherEvent(with: .applicationDefined, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: 0, context: nil, subtype: 0, data1: 0, data2: 0)!, atStart: false)
                 return

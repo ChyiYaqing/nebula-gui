@@ -6,7 +6,7 @@ import SwiftUI
     @StateObject private var model = AppModel()
     var body: some Scene {
         Window("Nebula", id: "main") {
-            MainView(model: model).onAppear { delegate.model = model }
+            MainView(model: model).onAppear { delegate.model = model; delegate.mainWindowAppeared() }
         }.defaultSize(width: 900, height: 680)
         .commands {
             CommandGroup(replacing: .newItem) { Button("导入网络…") { model.chooseImport() }.keyboardShortcut("o") }

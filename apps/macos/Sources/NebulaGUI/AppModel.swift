@@ -27,6 +27,18 @@ extension BackendClient: AppBackend {}
     var nodesVisible = false
     @Published var recoveryText = ""
     @Published var connectionBusy = false
+    /// Launch at login (#63): mirrors the system login item; only `setLaunchAtLogin` changes it.
+    @Published private(set) var loginItemState = LoginItemState.unavailable
+    @Published var loginItemNotice: String?
+    @Published var autoConnect = false { didSet { defaults.set(autoConnect, forKey: Self.autoConnectKey) } }
+    private(set) var lastConnectedID: String? {
+        get { defaults.string(forKey: Self.lastConnectedKey) }
+        set { defaults.set(newValue, forKey: Self.lastConnectedKey) }
+    }
+    private static let autoConnectKey = "autoConnectAtLaunch", lastConnectedKey = "lastConnectedProfileID"
+    private let defaults: UserDefaults
+    private let loginItem: any LoginItemControl
+    private var autoConnectAttempted = false
     @Published var automaticRecovery = true { didSet { recovery.setEnabled(automaticRecovery); recoveryTask?.cancel(); recoveryTask = nil; evaluateRecovery() } }
     @Published var notificationsBusy = false
     @Published var notificationsEnabled = false
@@ -50,7 +62,10 @@ extension BackendClient: AppBackend {}
     private var refreshingStatus = false
     @Published var profiles: [NetworkProfile] = []
     @Published var selectedID: String?
-    @Published var status = ConnectionStatus.disconnected
+    @Published var status = ConnectionStatus.disconnected {
+        // Remember the network for "connect at launch" (#63): only its ID, never credentials.
+        didSet { if status.isStarted, let id = status.profileID, id != lastConnectedID { lastConnectedID = id } }
+    }
     @Published var problem: BackendProblem?
     @Published var busy = false
     @Published var importing = false
@@ -95,9 +110,19 @@ extension BackendClient: AppBackend {}
     init(client: any AppBackend, now: @escaping () -> Date = Date.init,
          wait: @escaping (TimeInterval) async throws -> Void = { seconds in
              try await Task.sleep(nanoseconds: UInt64(max(0, seconds) * 1_000_000_000))
-         }, notifications: CertificateNotifications? = nil) {
+         }, notifications: CertificateNotifications? = nil,
+         defaults: UserDefaults? = nil, loginItem: (any LoginItemControl)? = nil) {
         self.client = client; self.now = now; self.wait = wait
         notificationsAllowed = false; injectedNotifications = notifications
+        // Tests and previews get a private, emptied domain and never the system login item.
+        self.defaults = defaults ?? {
+            let ephemeral = UserDefaults(suiteName: "net.nebula.gui.ephemeral")!
+            ephemeral.removePersistentDomain(forName: "net.nebula.gui.ephemeral")
+            return ephemeral
+        }()
+        self.loginItem = loginItem ?? UnavailableLoginItem()
+        autoConnect = self.defaults.bool(forKey: Self.autoConnectKey)
+        loginItemState = self.loginItem.state
     }
     convenience init() {
         let arguments = CommandLine.arguments
@@ -109,7 +134,10 @@ extension BackendClient: AppBackend {}
         let store = argument("--data-dir").map { URL(fileURLWithPath: $0) }
             ?? support.appendingPathComponent("NebulaGUI", isDirectory: true)
         let executable = Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/nebula-gui-backend")
-        self.init(client: BackendClient(executable: executable, store: store))
+        // An isolated --data-dir development run keeps away from real settings and login items.
+        let isolated = argument("--data-dir") != nil
+        self.init(client: BackendClient(executable: executable, store: store),
+                  defaults: isolated ? nil : .standard, loginItem: isolated ? nil : SystemLoginItem())
         servicesEnabled = true
         notificationsAllowed = argument("--data-dir") == nil
         notificationsEnabled = certificateNotifications.enabled
@@ -117,10 +145,12 @@ extension BackendClient: AppBackend {}
         environmentMonitor = ConnectionEnvironment { [weak self] event in self?.environmentChanged(event) }
         Task {
             await refresh()
+            await autoConnectIfNeeded()
             if let path = argument("--import") { await preview(path: path) }
         }
         foregroundObserver = NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
-            Task { @MainActor in await self?.refreshNotifications() }
+            // The user may have approved the login item in System Settings meanwhile.
+            Task { @MainActor in self?.refreshLoginItem(); await self?.refreshNotifications() }
         }
         startPolling()
     }
@@ -272,6 +302,30 @@ extension BackendClient: AppBackend {}
             importing = false; self.candidate = nil; problem = nil
             await refresh(); selectedID = saved.id
         } catch { setProblem(error) }
+    }
+    func refreshLoginItem() { loginItemState = loginItem.state }
+    func setLaunchAtLogin(_ enabled: Bool) {
+        loginItemNotice = nil
+        do { try enabled ? loginItem.register() : loginItem.unregister() }
+        catch { loginItemNotice = enabled ? "未能设置为登录时打开，请在系统设置的“登录项”中手动添加 Nebula。" : "未能取消登录时打开，请在系统设置的“登录项”中移除 Nebula。" }
+        loginItemState = loginItem.state
+    }
+    func openLoginItemSettings() { loginItem.openSettings() }
+    /// Runs once per launch. Never opens the administrator dialog: if the connection
+    /// component is missing or outdated it explains why and leaves connecting to the user.
+    /// A failed attempt is retried by automatic recovery like any user connection.
+    func autoConnectIfNeeded() async {
+        guard !autoConnectAttempted, !shuttingDown else { return }
+        autoConnectAttempted = true
+        guard autoConnect, !status.isStarted, let id = lastConnectedID else { return }
+        guard profiles.contains(where: { $0.id == id }) else {
+            problem = BackendProblem(code: "auto_connect_skipped", message: "上次使用的网络已移除，未自动连接。"); return
+        }
+        guard authorization.available, authorization.updateRequired != true else {
+            problem = BackendProblem(code: "auto_connect_skipped", message: "连接后台未启用或需要升级，未自动连接。处理后可手动连接。"); return
+        }
+        selectedID = id
+        await connectSelected()
     }
     func connectSelected() async {
         guard !busy, !shuttingDown else { return }

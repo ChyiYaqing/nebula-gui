@@ -118,6 +118,8 @@ struct NetworkConfiguration: View {
                         .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
                 }
             }.font(.caption).nebulaSurface()
+            StartupSettings(model: model)
+            Divider()
             CertificateNotificationSettings(model: model)
             Divider()
             AuthorizationStatusView(model: model)
@@ -240,6 +242,42 @@ struct KernelLogSection: View {
         let text = entries.map { "\($0.time) \($0.level.uppercased()) \($0.message) \($0.detail)" }.joined(separator: "\n")
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
+    }
+}
+
+/// App-wide startup behaviour (#63); both options default to off.
+struct StartupSettings: View {
+    @ObservedObject var model: AppModel
+    private var loginText: String {
+        switch model.loginItemState {
+        case .enabled: return "登录 macOS 后在菜单栏启动，不弹出主窗口。"
+        case .requiresApproval: return "已添加，但需要在系统设置的“登录项”中允许 Nebula。"
+        case .disabled: return "关闭时需手动打开 Nebula。"
+        case .unavailable: return "当前运行方式不支持设置登录项。"
+        }
+    }
+    private var lastNetwork: String {
+        guard let id = model.lastConnectedID else { return "尚未连接过网络。" }
+        return model.profiles.first { $0.id == id }.map { "上次使用：\($0.name)。" } ?? "上次使用的网络已移除。"
+    }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            SectionTitle(title: "启动与连接", symbol: "power")
+            Toggle("登录时打开 Nebula", isOn: Binding(
+                get: { model.loginItemState == .enabled || model.loginItemState == .requiresApproval },
+                set: { model.setLaunchAtLogin($0) }))
+                .toggleStyle(.switch).font(.system(size: 13, weight: .medium))
+                .disabled(model.loginItemState == .unavailable)
+            Text(model.loginItemNotice ?? loginText).font(.caption)
+                .foregroundStyle(model.loginItemNotice != nil || model.loginItemState == .requiresApproval ? Color.orange : .secondary)
+            if model.loginItemState == .requiresApproval {
+                Button("打开登录项设置") { model.openLoginItemSettings() }.frame(minHeight: 40)
+            }
+            Toggle("启动后自动连接上次使用的网络", isOn: $model.autoConnect)
+                .toggleStyle(.switch).font(.system(size: 13, weight: .medium))
+            Text(lastNetwork + "不会自动请求管理员授权；连接失败时按“连接中断后自动恢复”重试。")
+                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+        }
     }
 }
 
