@@ -90,7 +90,7 @@ struct PeerListView: View {
                     .font(.system(size: 11, weight: .medium, design: .monospaced))
                     .foregroundStyle(latest == nil ? Color.secondary : grade.color)
                     .frame(width: 58, alignment: .trailing)
-                LatencySparkline(points: points, color: grade.color).frame(width: 120, height: 26)
+                LatencySparkline(points: points, color: lineGrade(points).color).frame(width: 120, height: 26)
                 Image(systemName: open ? "chevron.up" : "chevron.down").foregroundStyle(.secondary).frame(width: 12)
             }.frame(minHeight: 40)
         }

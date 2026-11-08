@@ -7,6 +7,12 @@ extension LatencyGrade {
     }
 }
 
+/// Line colour follows the latest reply, so one missed echo does not grey out
+/// minutes of answered history; the value text shows the latest point itself.
+func lineGrade(_ points: [LatencyPoint]) -> LatencyGrade {
+    LatencyGrade.of(points.last(where: { $0.ms != nil })?.ms ?? nil)
+}
+
 func latencyText(_ ms: Double?) -> String {
     guard let ms else { return "无回复" }
     return ms < 10 ? String(format: "%.1f ms", ms) : String(format: "%.0f ms", ms)
@@ -68,7 +74,7 @@ struct LatencyDetail: View {
     let stats: LatencyStats
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            LatencySparkline(points: points, color: LatencyGrade.of(points.last?.ms ?? nil).color, showsScale: true)
+            LatencySparkline(points: points, color: lineGrade(points).color, showsScale: true)
                 .frame(height: 96)
                 .background(alignment: .bottom) { Divider() }
             HStack(spacing: 18) {
