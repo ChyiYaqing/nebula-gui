@@ -19,8 +19,17 @@ public struct LatencyRound: Decodable, Sendable, Equatable {
 /// `ms == nil` means the echo got no reply. Rounds that could not measure are not points.
 public struct LatencyPoint: Sendable, Equatable {
     public let ms: Double?
-    public init(ms: Double?) { self.ms = ms }
+    /// When the backend finished the round; nil if its timestamp could not be parsed.
+    public let at: Date?
+    public init(ms: Double?, at: Date? = nil) { self.ms = ms; self.at = at }
 }
+
+private let fractionalTime: ISO8601DateFormatter = {
+    let formatter = ISO8601DateFormatter()
+    formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    return formatter
+}()
+private let plainTime = ISO8601DateFormatter()
 
 /// Describes ICMP replies only; never whether a node is online.
 public enum LatencyGrade: String, CaseIterable, Sendable {
@@ -58,11 +67,12 @@ public struct LatencyHistory: Sendable, Equatable {
     /// A round from another session (reconnect, network switch) starts a new history.
     public mutating func record(_ round: LatencyRound, session: String) {
         if session != self.session { self.session = session; series = [:] }
+        let at = fractionalTime.date(from: round.observedAt) ?? plainTime.date(from: round.observedAt)
         for sample in round.samples {
             let point: LatencyPoint
             switch sample.status {
-            case "reply": point = LatencyPoint(ms: sample.latencyMS)
-            case "timeout": point = LatencyPoint(ms: nil)
+            case "reply": point = LatencyPoint(ms: sample.latencyMS, at: at)
+            case "timeout": point = LatencyPoint(ms: nil, at: at)
             default: continue
             }
             var points = series[sample.address, default: []]

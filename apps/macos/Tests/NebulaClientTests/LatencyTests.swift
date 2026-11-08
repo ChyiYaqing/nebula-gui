@@ -32,6 +32,16 @@ final class LatencyTests: XCTestCase {
         XCTAssertNil(history.stats(for: "missing").jitter)
     }
 
+    func testPointsKeepTheRoundTime() {
+        var history = LatencyHistory()
+        history.record(LatencyRound(observedAt: "2026-11-08T04:50:31.123456Z", samples: [LatencySample(address: "a", status: "reply", latencyMS: 9)]), session: "s")
+        history.record(LatencyRound(observedAt: "2026-11-08T04:50:36Z", samples: [LatencySample(address: "a", status: "timeout", latencyMS: nil)]), session: "s")
+        history.record(LatencyRound(observedAt: "not a time", samples: [LatencySample(address: "a", status: "reply", latencyMS: 8)]), session: "s")
+        let points = history.points(for: "a")
+        XCTAssertEqual(points[0].at?.timeIntervalSince1970 ?? 0, 1_794_113_431.123, accuracy: 0.001)
+        XCTAssertEqual(points[1].at, Date(timeIntervalSince1970: 1_794_113_436))
+        XCTAssertNil(points[2].at)
+    }
     func testRingBufferKeepsLatestSixty() {
         var history = LatencyHistory()
         for i in 0..<75 { history.record(round([("a", "reply", Double(i))]), session: "s") }

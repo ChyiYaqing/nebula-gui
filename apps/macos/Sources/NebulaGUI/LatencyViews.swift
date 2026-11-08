@@ -24,6 +24,9 @@ struct LatencySparkline: View {
     let points: [LatencyPoint]
     var color: Color = Palette.accent
     var showsScale = false
+    /// Detailed chart only: hovering shows the sample's time and value.
+    var interactive = false
+    @State private var hover: Int?
     var body: some View {
         GeometryReader { geometry in
             let size = geometry.size
@@ -54,9 +57,39 @@ struct LatencySparkline: View {
                 if showsScale {
                     Text(latencyText(top)).font(.system(size: 10, design: .monospaced)).foregroundStyle(.secondary)
                 }
+                if interactive, let i = hover, points.indices.contains(i) {
+                    let point = points[i]
+                    Rectangle().fill(Color.secondary.opacity(0.45)).frame(width: 1, height: size.height)
+                        .position(x: x(i), y: size.height / 2)
+                    Circle().fill(point.ms == nil ? Color.secondary : color).frame(width: 7, height: 7)
+                        .overlay { Circle().stroke(Palette.canvas, lineWidth: 1.5) }
+                        .position(x: x(i), y: point.ms.map(y) ?? size.height - 1.5)
+                    hoverLabel(point)
+                        .position(x: min(max(x(i), 80), size.width - 80), y: 11) // Kept inside the chart.
+                }
+            }
+            .contentShape(Rectangle())
+            .onContinuousHover { phase in
+                guard interactive else { return }
+                switch phase {
+                case .active(let location):
+                    let slot = Int((location.x / step).rounded()) - Int(start)
+                    hover = points.indices.contains(slot) ? slot : nil
+                case .ended:
+                    hover = nil
+                }
             }
         }
         .accessibilityHidden(true) // The text beside it carries the value.
+    }
+    private func hoverLabel(_ point: LatencyPoint) -> some View {
+        Text("\(point.at?.formatted(date: .omitted, time: .standard) ?? "时间未知") · \(latencyText(point.ms))")
+            .font(.system(size: 11, weight: .medium, design: .monospaced))
+            .foregroundStyle(point.ms == nil ? Color.secondary : Color.primary)
+            .padding(.horizontal, 7).padding(.vertical, 3)
+            .background(Palette.canvas, in: RoundedRectangle(cornerRadius: 6))
+            .overlay { RoundedRectangle(cornerRadius: 6).stroke(Color.primary.opacity(0.12), lineWidth: 1) }
+            .fixedSize()
     }
     /// Consecutive replies, as (slot, ms) runs separated by missing replies.
     private func segments() -> [[(Int, Double)]] {
@@ -74,7 +107,7 @@ struct LatencyDetail: View {
     let stats: LatencyStats
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            LatencySparkline(points: points, color: lineGrade(points).color, showsScale: true)
+            LatencySparkline(points: points, color: lineGrade(points).color, showsScale: true, interactive: true)
                 .frame(height: 96)
                 .background(alignment: .bottom) { Divider() }
             HStack(spacing: 18) {
@@ -85,7 +118,7 @@ struct LatencyDetail: View {
                 metric("丢包", stats.lossPercent.map { "\($0)%" } ?? "—")
                 metric("样本", "\(stats.samples)")
             }
-            Text("最近 \(LatencyHistory.capacity) 次采样（约 5 分钟），只统计 ICMP 回复。未回复可能是节点禁止 ICMP，不代表远端离线。")
+            Text("最近 \(LatencyHistory.capacity) 次采样（约 5 分钟），只统计 ICMP 回复，鼠标悬停可查看每次采样的时间和数值。未回复可能是节点禁止 ICMP，不代表远端离线。")
                 .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         }
         .padding(12).background(Palette.surface, in: RoundedRectangle(cornerRadius: Palette.small))
