@@ -218,6 +218,7 @@ private struct MenuPanelDismissal: NSViewRepresentable {
     final class Watcher: NSView {
         private var mouseMonitor: Any?
         private var keyObserver: NSObjectProtocol?
+        private var resignObserver: NSObjectProtocol?
         private var panelObservers: [NSObjectProtocol] = []
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
@@ -225,16 +226,25 @@ private struct MenuPanelDismissal: NSViewRepresentable {
             panelObservers.forEach(NotificationCenter.default.removeObserver)
             panelObservers = []
             guard let panel = window else { return }
-            // SwiftUI may reuse the panel window: watch from each appearance until it closes.
+            // SwiftUI may reuse the panel window. A panel opened from the menu bar does not
+            // always become key (e.g. while Nebula is inactive), so watching follows whether it
+            // is actually on screen, not key status.
             panelObservers = [
+                NotificationCenter.default.addObserver(forName: NSWindow.didChangeOcclusionStateNotification, object: panel, queue: .main) { [weak self] _ in
+                    Task { @MainActor in self?.syncWithVisibility() }
+                },
                 NotificationCenter.default.addObserver(forName: NSWindow.didBecomeKeyNotification, object: panel, queue: .main) { [weak self] _ in
-                    Task { @MainActor in self?.startWatching() }
+                    Task { @MainActor in self?.syncWithVisibility() }
                 },
                 NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: panel, queue: .main) { [weak self] _ in
                     Task { @MainActor in self?.stopWatching() }
                 },
             ]
-            if panel.isVisible { startWatching() }
+            syncWithVisibility()
+        }
+        private func syncWithVisibility() {
+            guard let panel = window else { return stopWatching() }
+            if panel.isVisible && panel.occlusionState.contains(.visible) { startWatching() } else { stopWatching() }
         }
         private func startWatching() {
             guard mouseMonitor == nil, window != nil else { return }
@@ -248,6 +258,10 @@ private struct MenuPanelDismissal: NSViewRepresentable {
                     self.closePanel()
                 }
             }
+            // Another app becoming active (its window or its own menu bar item was clicked).
+            resignObserver = NotificationCenter.default.addObserver(forName: NSApplication.didResignActiveNotification, object: nil, queue: .main) { [weak self] _ in
+                Task { @MainActor in self?.closePanel() }
+            }
         }
         private func closePanel() {
             stopWatching()
@@ -256,7 +270,8 @@ private struct MenuPanelDismissal: NSViewRepresentable {
         private func stopWatching() {
             if let mouseMonitor { NSEvent.removeMonitor(mouseMonitor) }
             if let keyObserver { NotificationCenter.default.removeObserver(keyObserver) }
-            mouseMonitor = nil; keyObserver = nil
+            if let resignObserver { NotificationCenter.default.removeObserver(resignObserver) }
+            mouseMonitor = nil; keyObserver = nil; resignObserver = nil
         }
     }
 }
