@@ -27,13 +27,13 @@ public struct NetworkProfile: Codable, Sendable, Identifiable, Equatable {
     }
     public var daysRemaining: Int? { expiration.map { Int(floor($0.timeIntervalSinceNow / 86400)) } }
 }
-public struct KnownPeer: Codable, Sendable, Identifiable {
+public struct KnownPeer: Codable, Sendable, Identifiable, Equatable {
     public let name: String
     public let addresses: [String]
     public let pending: Bool
     public var id: String { addresses.joined(separator: ",") + String(pending) }
 }
-public struct ConnectionStatus: Codable, Sendable {
+public struct ConnectionStatus: Codable, Sendable, Equatable {
     public var startedAt: String? = nil
     public var observedAt: String? = nil
     public let state: String
@@ -46,6 +46,11 @@ public struct ConnectionStatus: Codable, Sendable {
     }
     public static let disconnected = ConnectionStatus(state: "disconnected", profileID: nil, error: nil, peers: [])
     public var isStarted: Bool { state == "started" }
+    /// Equal apart from the poll timestamp: an unchanged poll need not re-render the window.
+    public func sameObservation(as other: ConnectionStatus) -> Bool {
+        var copy = self; copy.observedAt = other.observedAt
+        return copy == other
+    }
 }
 public struct BackendRequest: Encodable, Sendable {
     public let version = 1
@@ -86,7 +91,7 @@ public enum Wire {
 }
 public struct Acknowledgement: Decodable, Sendable { public let removed: Bool }
 
-public struct ConnectionEvent: Decodable, Sendable, Identifiable {
+public struct ConnectionEvent: Decodable, Sendable, Identifiable, Equatable {
     public let time: String
     public let code: String
     public var id: String { time + code }
@@ -114,7 +119,7 @@ public struct KernelLogField: Decodable, Sendable, Hashable {
     public let key: String
     public let value: String
 }
-public struct KernelLogEntry: Decodable, Sendable, Identifiable {
+public struct KernelLogEntry: Decodable, Sendable, Identifiable, Equatable {
     public let seq: UInt64
     public let time: String
     public let level: String
@@ -125,7 +130,7 @@ public struct KernelLogEntry: Decodable, Sendable, Identifiable {
     /// One line for display and copying, e.g. `error=denied udpAddr=…`.
     public var detail: String { fields.map { "\($0.key)=\($0.value)" }.joined(separator: " ") }
 }
-public struct KernelLogPage: Decodable, Sendable {
+public struct KernelLogPage: Decodable, Sendable, Equatable {
     public let available: Bool
     public let entries: [KernelLogEntry]
 }

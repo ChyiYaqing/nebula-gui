@@ -105,9 +105,24 @@ extension View {
     }
 }
 
+private enum EventTimeCache {
+    static let fractional: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
+    static let plain = ISO8601DateFormatter()
+    static let style = Date.FormatStyle(date: .abbreviated, time: .standard)
+    static let results: NSCache<NSString, NSString> = { let cache = NSCache<NSString, NSString>(); cache.countLimit = 1000; return cache }()
+}
+
+/// Log and event rows re-render on every poll. Rebuilding two formatters per call
+/// cost ~180 ms per 400 rows on a 2019 Intel iMac, so formatters are shared and
+/// each timestamp is formatted once.
 func eventTime(_ raw: String) -> String {
-    let formatter = ISO8601DateFormatter()
-    formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-    return (formatter.date(from: raw) ?? ISO8601DateFormatter().date(from: raw))?
-        .formatted(date: .abbreviated, time: .standard) ?? raw
+    if let hit = EventTimeCache.results.object(forKey: raw as NSString) { return hit as String }
+    let text = (EventTimeCache.fractional.date(from: raw) ?? EventTimeCache.plain.date(from: raw))
+        .map { $0.formatted(EventTimeCache.style) } ?? raw
+    EventTimeCache.results.setObject(text as NSString, forKey: raw as NSString)
+    return text
 }

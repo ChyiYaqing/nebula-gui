@@ -1,6 +1,7 @@
 import XCTest
 import NebulaClient
 import CoreGraphics
+import Combine
 @testable import NebulaGUI
 
 extension AppModelTests {
@@ -24,6 +25,36 @@ extension AppModelTests {
         XCTAssertEqual(model.kernelLogs?.entries.count, 1)
         XCTAssertNil(model.problem)
         _ = await model.shutdown()
+    }
+    /// Tab switches stuttered on a real Intel iMac: every 3 s poll re-rendered the window even when nothing changed.
+    func testUnchangedPollDoesNotRepublish() async throws {
+        let backend = controlledBackend(), model = try model(backend)
+        var changes = 0
+        let watcher = model.objectWillChange.sink { changes += 1 }
+        defer { watcher.cancel() }
+        func poll(_ status: String) async throws {
+            let statusRequested = backend.expect("status"), authorizationRequested = backend.expect("authorization")
+            let task = Task { await model.refreshStatus() }
+            await fulfillment(of: [statusRequested], timeout: 2)
+            try backend.replyJSON("status", data: Data(status.utf8))
+            await fulfillment(of: [authorizationRequested], timeout: 2)
+            try backend.replyJSON("authorization", data: Data(#"{"available":true}"#.utf8))
+            await task.value
+        }
+        try await poll(#"{"state":"disconnected","peers":[],"observedAt":"2026-11-08T02:00:00Z"}"#)
+        try await poll(#"{"state":"disconnected","peers":[],"observedAt":"2026-11-08T02:00:03Z"}"#)
+        XCTAssertEqual(changes, 0, "only the poll timestamp changed")
+        try await poll(#"{"state":"started","profileID":"first","peers":[],"observedAt":"2026-11-08T02:00:06Z","startedAt":"2026-11-08T02:00:05Z"}"#)
+        XCTAssertGreaterThan(changes, 0)
+        XCTAssertTrue(model.status.isStarted)
+        _ = await model.shutdown()
+    }
+    func testEventTimeIsStableAcrossCachedCalls() {
+        let first = eventTime("2026-11-08T01:52:46.712486Z"), again = eventTime("2026-11-08T01:52:46.712486Z")
+        XCTAssertEqual(first, again)
+        XCTAssertNotEqual(first, "2026-11-08T01:52:46.712486Z", "fractional ISO 8601 parses")
+        XCTAssertNotEqual(eventTime("2026-11-08T01:52:46Z"), "2026-11-08T01:52:46Z", "plain ISO 8601 parses")
+        XCTAssertEqual(eventTime("not a date"), "not a date")
     }
     func testOverlappingLiveLogRefreshesSendOneRequest() async throws {
         let backend = controlledBackend(), model = try model(backend)

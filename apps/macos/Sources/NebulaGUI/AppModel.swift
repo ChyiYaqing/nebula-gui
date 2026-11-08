@@ -157,10 +157,15 @@ extension BackendClient: AppBackend {}
         do {
             let snapshot = try await client.send(BackendRequest(method: "status"), as: ConnectionStatus.self)
             guard generation == recovery.generation, !shuttingDown else { return }
-            status = snapshot
-            authorization = try await client.send(BackendRequest(method: "authorization"), as: AuthorizationState.self)
+            // Publish only real changes: every assignment re-renders the whole window.
+            if !snapshot.sameObservation(as: status) { status = snapshot }
+            let currentAuthorization = try await client.send(BackendRequest(method: "authorization"), as: AuthorizationState.self)
             guard generation == recovery.generation, !shuttingDown else { return }
-            if showDetails { events = try await client.send(BackendRequest(method: "events"), as: [ConnectionEvent].self) }
+            if currentAuthorization != authorization { authorization = currentAuthorization }
+            if showDetails {
+                let currentEvents = try await client.send(BackendRequest(method: "events"), as: [ConnectionEvent].self)
+                if currentEvents != events { events = currentEvents }
+            }
             if snapshot.isStarted, let code = problem?.code, transientCodes.contains(code) { problem = nil }
         } catch {
             guard generation == recovery.generation, !shuttingDown else { return }
@@ -195,7 +200,7 @@ extension BackendClient: AppBackend {}
     func refreshLogs() async {
         guard logsVisible, !shuttingDown, !sleeping, !refreshingLogs else { return }
         refreshingLogs = true; defer { refreshingLogs = false }
-        if let page = try? await client.send(BackendRequest(method: "logs"), as: KernelLogPage.self) { kernelLogs = page }
+        if let page = try? await client.send(BackendRequest(method: "logs"), as: KernelLogPage.self), page != kernelLogs { kernelLogs = page }
     }
     func chooseImport(replacing: String? = nil) {
         guard !shuttingDown, renameTarget == nil else { return }
@@ -414,21 +419,23 @@ struct NodeProbe: Identifiable {
 
 extension AppModel {
     private var transientCodes: [String] { ["backend_stopped", "backend_unavailable", "cleanup_incomplete", "cleanup_pending", "authorization_required", "rebind_failed"] }
+    /// Runs after every 3 s poll; assigning an unchanged @Published value still re-renders the window.
+    private func showRecovery(_ text: String) { if recoveryText != text { recoveryText = text } }
     private func evaluateRecovery() {
         guard !shuttingDown else { return }
         if status.isStarted {
-            recovery.observedStarted(at: now()); recoveryText = ""; return
+            recovery.observedStarted(at: now()); showRecovery(""); return
         }
-        guard recovery.desiredProfileID != nil, automaticRecovery else { recoveryText = ""; return }
-        if sleeping { recoveryText = "电脑睡眠期间暂停恢复"; return }
-        if !networkAvailable { recoveryText = "系统网络不可用，恢复已暂停"; return }
+        guard recovery.desiredProfileID != nil, automaticRecovery else { showRecovery(""); return }
+        if sleeping { showRecovery("电脑睡眠期间暂停恢复"); return }
+        if !networkAvailable { showRecovery("系统网络不可用，恢复已暂停"); return }
         guard !busy, !shuttingDown else { return }
         let code = status.error?.code ?? problem?.code ?? "backend_stopped"
         guard let retry = recovery.schedule(code: code, at: now()) else {
-            recoveryText = recovery.attempts >= 5 ? "自动恢复已暂停，请手动重新连接" : "请处理提示后手动重新连接"
+            showRecovery(recovery.attempts >= 5 ? "自动恢复已暂停，请手动重新连接" : "请处理提示后手动重新连接")
             return
         }
-        recoveryText = "等待自动恢复，第 \(recovery.attempts + 1)／5 次"
+        showRecovery("等待自动恢复，第 \(recovery.attempts + 1)／5 次")
         guard recoveryTask == nil else { return }
         let scheduledGeneration = recovery.generation
         recoveryTask = Task { [weak self] in
