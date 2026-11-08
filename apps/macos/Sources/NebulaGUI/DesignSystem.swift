@@ -25,7 +25,10 @@ enum Palette {
 struct PressStyle: ButtonStyle {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     func makeBody(configuration: Configuration) -> some View {
-        configuration.label.scaleEffect(configuration.isPressed && !reduceMotion ? 0.97 : 1)
+        // Without a content shape only drawn pixels are clickable: an unselected tab
+        // or sidebar row (clear background) reacted only on its icon and text.
+        configuration.label.contentShape(Rectangle())
+            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.97 : 1)
             .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: configuration.isPressed)
     }
 }
