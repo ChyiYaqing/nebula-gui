@@ -43,6 +43,7 @@ struct MenuContent: View {
         footer
         }
         .frame(width: 340).background(Palette.canvas).tint(Palette.accent)
+        .background(MenuPanelDismissal())
         .onAppear { model.showMenu(true) }
         .onDisappear { model.showMenu(false) }
     }
@@ -202,5 +203,60 @@ private struct FooterButton<Content: View>: View {
         .onHover { hovering = $0 }
         .help(help)
         .accessibilityLabel(accessibility)
+    }
+}
+
+/// Closes the menu bar panel when the user clicks elsewhere, like a system menu (#65):
+/// a click in another app or on the desktop, or another Nebula window becoming key
+/// (e.g. after "打开 Nebula" or "设置"). Clicks on the status item itself are left to
+/// MenuBarExtra so the panel toggles instead of closing and reopening. Observers exist
+/// only while the panel is on screen. Watching mouse clicks needs no Accessibility access.
+private struct MenuPanelDismissal: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView { Watcher() }
+    func updateNSView(_ view: NSView, context: Context) {}
+
+    final class Watcher: NSView {
+        private var mouseMonitor: Any?
+        private var keyObserver: NSObjectProtocol?
+        private var panelObservers: [NSObjectProtocol] = []
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            stopWatching()
+            panelObservers.forEach(NotificationCenter.default.removeObserver)
+            panelObservers = []
+            guard let panel = window else { return }
+            // SwiftUI may reuse the panel window: watch from each appearance until it closes.
+            panelObservers = [
+                NotificationCenter.default.addObserver(forName: NSWindow.didBecomeKeyNotification, object: panel, queue: .main) { [weak self] _ in
+                    Task { @MainActor in self?.startWatching() }
+                },
+                NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: panel, queue: .main) { [weak self] _ in
+                    Task { @MainActor in self?.stopWatching() }
+                },
+            ]
+            if panel.isVisible { startWatching() }
+        }
+        private func startWatching() {
+            guard mouseMonitor == nil, window != nil else { return }
+            mouseMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]) { [weak self] _ in
+                Task { @MainActor in self?.closePanel() }
+            }
+            keyObserver = NotificationCenter.default.addObserver(forName: NSWindow.didBecomeKeyNotification, object: nil, queue: .main) { [weak self] note in
+                let other = note.object as? NSWindow
+                Task { @MainActor in
+                    guard let self, let other, other !== self.window, other.level == .normal else { return }
+                    self.closePanel()
+                }
+            }
+        }
+        private func closePanel() {
+            stopWatching()
+            window?.close()
+        }
+        private func stopWatching() {
+            if let mouseMonitor { NSEvent.removeMonitor(mouseMonitor) }
+            if let keyObserver { NotificationCenter.default.removeObserver(keyObserver) }
+            mouseMonitor = nil; keyObserver = nil
+        }
     }
 }
