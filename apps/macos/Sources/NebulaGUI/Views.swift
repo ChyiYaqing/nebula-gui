@@ -35,6 +35,7 @@ struct MainView: View {
                             }
                         } else { emptyState }
                     }.padding(24).frame(maxWidth: .infinity, alignment: .leading)
+                    .buttonStyle(NebulaButtonStyle())
                 }
                 Divider()
                 HStack {
@@ -101,7 +102,7 @@ struct MainView: View {
             }
             Button { model.chooseImport() } label: {
                 Label("导入网络", systemImage: "plus").frame(maxWidth: .infinity, minHeight: 40)
-            }.buttonStyle(.bordered).disabled(model.busy).keyboardShortcut("o", modifiers: .command)
+            }.buttonStyle(NebulaButtonStyle()).disabled(model.busy).keyboardShortcut("o", modifiers: .command)
             Text("本机验证版 · \(Bundle.main.object(forInfoDictionaryKey: "NebulaReleaseVersion") as? String ?? "开发构建")").font(.caption2).foregroundStyle(.secondary)
         }.padding(16).frame(width: 200).background(Palette.sidebar)
     }
@@ -130,7 +131,7 @@ struct MainView: View {
                     Button(role: .destructive) { Task { await model.disconnect() } } label: {
                         Label(model.connectionBusy ? "取消并断开" : "停止恢复", systemImage: "stop.circle")
                             .foregroundStyle(.red).frame(minHeight: 40)
-                    }.buttonStyle(.bordered).tint(.red)
+                    }.buttonStyle(NebulaButtonStyle())
                 } else if model.status.isStarted && !model.isCurrentStarted {
                     NetworkActionButton(title: "断开当前网络", symbol: "stop.circle", disconnecting: true) {
                         Task { await model.disconnect() }
@@ -171,7 +172,7 @@ struct MainView: View {
             }.nebulaSurface()
             Button { model.chooseImport() } label: {
                 Label("选择配置或文件夹", systemImage: "folder.badge.plus").padding(.horizontal, 10).frame(height: 40)
-            }.buttonStyle(.borderedProminent).disabled(model.busy)
+            }.buttonStyle(NebulaButtonStyle(prominent: true)).disabled(model.busy)
             Text("也可以直接拖入文件夹。原始文件不会被修改。")
                 .font(.caption).foregroundStyle(.secondary)
         }.padding(.vertical, 10).frame(maxWidth: .infinity, alignment: .leading)
