@@ -4,7 +4,8 @@ import XCTest
 
 final class UpgradeTests: XCTestCase {
     func testUpgradeAndFailureRollbackInIsolatedFilesystem() throws {
-        for scenario in ["success", "bootstrap-failure", "health-failure", "checksum-failure"] {
+        // slow-bootout: launchd keeps listing the job briefly after bootout returns.
+        for scenario in ["success", "slow-bootout", "bootstrap-failure", "health-failure", "checksum-failure"] {
             let root = FileManager.default.temporaryDirectory.appendingPathComponent("ng-upgrade-" + UUID().uuidString)
             try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
             defer { try? FileManager.default.removeItem(at: root) }
@@ -24,22 +25,7 @@ final class UpgradeTests: XCTestCase {
             if scenario != "success" { try Data().write(to: root.appendingPathComponent(scenario)) }
             let launchctl = root.appendingPathComponent("launchctl")
             let sudo = root.appendingPathComponent("sudo")
-            try writeExecutable(#"""
-            #!/usr/bin/python3
-            import pathlib, sys
-            root = pathlib.Path(__file__).parent
-            args = sys.argv[1:]
-            loaded = root / 'loaded'
-            with (root / 'commands').open('a') as f: f.write(' '.join(args) + '\n')
-            if args[:2] == ['print', 'system/com.slack.nebula']: sys.exit(1)
-            if args[0] == 'print': sys.exit(0 if loaded.exists() else 1)
-            if args[0] == 'bootout':
-                if args[1] != '--wait': sys.exit(55)
-                loaded.unlink(missing_ok=True)
-            if args[0] == 'bootstrap':
-                if (root / 'bootstrap-failure').exists() and '<plist' in pathlib.Path(args[2]).read_text(): sys.exit(1)
-                loaded.touch()
-            """#, to: launchctl)
+            try writeLaunchctl(to: launchctl)
             try writeExecutable(#"""
             #!/usr/bin/python3
             import pathlib, sys
@@ -58,6 +44,7 @@ final class UpgradeTests: XCTestCase {
                 .replacingOccurrences(of: " = 0 ]", with: " = \(getuid()) ]")
             XCTAssertFalse(script.contains("/bin/launchctl"))
             XCTAssertFalse(script.contains("/usr/bin/sudo"))
+            XCTAssertFalse(plan.script.contains("--wait"), "macOS 13 launchctl rejects bootout --wait")
             let file = root.appendingPathComponent("transaction.sh")
             try Data(script.utf8).write(to: file)
             if scenario == "checksum-failure" { try Data("changed after review".utf8).write(to: source) }
@@ -66,7 +53,7 @@ final class UpgradeTests: XCTestCase {
             process.standardOutput = FileHandle.nullDevice; process.standardError = errors
             try process.run()
             let errorData = errors.fileHandleForReading.readDataToEndOfFile(); process.waitUntilExit()
-            if scenario == "success" {
+            if scenario == "success" || scenario == "slow-bootout" {
                 XCTAssertEqual(process.terminationStatus, 0, String(decoding: errorData, as: UTF8.self))
                 XCTAssertEqual(try String(contentsOf: installed, encoding: .utf8), "new helper")
             } else {
@@ -75,8 +62,70 @@ final class UpgradeTests: XCTestCase {
                 XCTAssertEqual(try String(contentsOf: plist, encoding: .utf8), "old plist", scenario)
             }
             XCTAssertTrue(FileManager.default.fileExists(atPath: root.appendingPathComponent("loaded").path), scenario)
+            let commands = try String(contentsOf: root.appendingPathComponent("commands"), encoding: .utf8)
+            if scenario != "checksum-failure" { XCTAssertTrue(commands.contains("bootout system/net.nebula.gui.helper"), scenario) }
             XCTAssertFalse(FileManager.default.fileExists(atPath: installed.deletingLastPathComponent().appendingPathComponent(".install-lock").path))
         }
+    }
+    func testUninstallStopsHelperWithoutWaitFlag() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("ng-uninstall-" + UUID().uuidString)
+        let library = root.appendingPathComponent("Library")
+        let installed = root.appendingPathComponent(String(AuthorizationPlan.helperPath.dropFirst()))
+        let plist = root.appendingPathComponent(String(AuthorizationPlan.plistPath.dropFirst()))
+        try FileManager.default.createDirectory(at: installed.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: plist.deletingLastPathComponent(), withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try Data("old helper".utf8).write(to: installed); try Data("old plist".utf8).write(to: plist)
+        try Data().write(to: root.appendingPathComponent("loaded"))
+        try Data().write(to: root.appendingPathComponent("slow-bootout"))
+        let launchctl = root.appendingPathComponent("launchctl")
+        try writeLaunchctl(to: launchctl)
+        let plan = AuthorizationPlan.uninstall()
+        XCTAssertFalse(plan.script.contains("--wait"))
+        let script = plan.script.replacingOccurrences(of: "/Library", with: library.path)
+            .replacingOccurrences(of: "/bin/launchctl", with: AuthorizationPlan.shellQuote(launchctl.path))
+            .replacingOccurrences(of: " = 0 ]", with: " = \(getuid()) ]")
+        XCTAssertFalse(script.contains("/bin/launchctl"))
+        let file = root.appendingPathComponent("uninstall.sh")
+        try Data(script.utf8).write(to: file)
+        let process = Process(); let errors = Pipe()
+        process.executableURL = URL(fileURLWithPath: "/bin/sh"); process.arguments = [file.path]
+        process.standardOutput = FileHandle.nullDevice; process.standardError = errors
+        try process.run()
+        let errorData = errors.fileHandleForReading.readDataToEndOfFile(); process.waitUntilExit()
+        XCTAssertEqual(process.terminationStatus, 0, String(decoding: errorData, as: UTF8.self))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("loaded").path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: installed.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: plist.path))
+    }
+    /// Mirrors macOS 13 launchctl: `bootout --wait` is a usage error (64), the
+    /// failure seen on a real 13.7.8 upgrade. No system job is ever called.
+    private func writeLaunchctl(to url: URL) throws {
+        try writeExecutable(#"""
+        #!/usr/bin/python3
+        import pathlib, sys
+        root = pathlib.Path(__file__).parent
+        args = sys.argv[1:]
+        loaded = root / 'loaded'
+        linger = root / 'linger'
+        with (root / 'commands').open('a') as f: f.write(' '.join(args) + '\n')
+        if '--wait' in args: sys.exit(64)
+        if args[:2] == ['print', 'system/com.slack.nebula']: sys.exit(1)
+        if args[0] == 'print':
+            if linger.exists():
+                left = int(linger.read_text()) - 1
+                if left > 0: linger.write_text(str(left))
+                else: linger.unlink(); loaded.unlink(missing_ok=True)
+                sys.exit(0)
+            sys.exit(0 if loaded.exists() else 1)
+        if args[0] == 'bootout':
+            if not loaded.exists(): sys.exit(3)
+            if (root / 'slow-bootout').exists(): linger.write_text('3')
+            else: loaded.unlink()
+        if args[0] == 'bootstrap':
+            if (root / 'bootstrap-failure').exists() and '<plist' in pathlib.Path(args[2]).read_text(): sys.exit(1)
+            loaded.touch()
+        """#, to: url)
     }
     private func writeExecutable(_ script: String, to url: URL) throws {
         try Data(script.utf8).write(to: url)

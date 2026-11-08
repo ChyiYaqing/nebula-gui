@@ -22,6 +22,19 @@ public struct AuthorizationPlan: Sendable {
     ensure_directory /Library/PrivilegedHelperTools
     ensure_directory /Library/LaunchDaemons
     ensure_directory /Library/PrivilegedHelperTools/net.nebula.gui
+    # macOS 13 launchctl cannot wait during bootout (usage error 64). Boot out, then wait,
+    # bounded beyond the plist's 15 s ExitTimeOut, until launchd forgets the
+    # service and its old process has exited, so the control socket is released.
+    stop_helper() {
+      old_pid=$(/bin/launchctl print system/net.nebula.gui.helper 2>/dev/null | /usr/bin/awk '$1 == "pid" && $2 == "=" {print $3; exit}')
+      /bin/launchctl bootout system/net.nebula.gui.helper >/dev/null 2>&1 || true
+      tries=0
+      while /bin/launchctl print system/net.nebula.gui.helper >/dev/null 2>&1 || { [ -n "$old_pid" ] && /bin/kill -0 "$old_pid" 2>/dev/null; }; do
+        tries=$((tries + 1))
+        [ "$tries" -le 100 ] || return 1
+        /bin/sleep 0.2
+      done
+    }
     """#
     public static func install(bundle: URL, uid: UInt32, upgrading: Bool = false) throws -> AuthorizationPlan {
         guard uid > 0 else { throw BackendProblem(code: "invalid_user", message: "请用普通用户打开应用。") }
@@ -72,7 +85,7 @@ public struct AuthorizationPlan: Sendable {
           [ -z "$stage" ] || /bin/rm -f "$stage"
           [ -z "$plist_stage" ] || /bin/rm -f "$plist_stage"
           if [ "$committed" -eq 0 ] && [ "$published" -eq 1 ]; then
-            /bin/launchctl bootout --wait system/net.nebula.gui.helper >/dev/null 2>&1 || true
+            stop_helper || true
             if [ -n "$old_helper" ] && [ -n "$old_plist" ]; then
               if /bin/mv "$old_helper" \(shellQuote(helperPath)) && /bin/mv "$old_plist" \(shellQuote(plistPath)); then
                 /bin/launchctl bootstrap system \(shellQuote(plistPath)) || echo 'Previous component could not restart.' >&2
@@ -116,7 +129,7 @@ public struct AuthorizationPlan: Sendable {
         NEBULA_GUI_PLIST
         /usr/sbin/chown root:wheel "$plist_stage"
         /bin/chmod 644 "$plist_stage"
-        \(upgrading ? "published=1\n/bin/launchctl bootout --wait system/net.nebula.gui.helper" : "")
+        \(upgrading ? "published=1\nstop_helper || exit 75" : "")
         /bin/mv "$stage" \(shellQuote(helperPath))
         published=1
         /bin/mv "$plist_stage" \(shellQuote(plistPath))
@@ -135,9 +148,7 @@ public struct AuthorizationPlan: Sendable {
         AuthorizationPlan(script: preflight + "\n" + """
         /bin/mkdir /Library/PrivilegedHelperTools/net.nebula.gui/.install-lock || exit 79
         trap '/bin/rmdir /Library/PrivilegedHelperTools/net.nebula.gui/.install-lock' EXIT
-        /bin/launchctl bootout --wait system/net.nebula.gui.helper >/dev/null 2>&1 || {
-          if /bin/launchctl print system/net.nebula.gui.helper >/dev/null 2>&1; then exit 75; fi
-        }
+        stop_helper || exit 75
         /bin/rm -f \(shellQuote(plistPath)) \(shellQuote(helperPath))
 
         """)
