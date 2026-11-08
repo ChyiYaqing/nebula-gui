@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -29,6 +30,9 @@ var logFieldAllowlist = map[string]bool{
 	"handshake.stage": true, "handshake.style": true,
 	"interface": true, "tun.dev": true, "mtu": true, "listen.port": true, "networks": true, "vpnNetworks": true,
 	"route": true, "via": true, "version": true, "routines": true,
+	// Plain scalars and addresses seen on real handshake/relay logs (#57).
+	"from": true, "durationNs": true, "sentCachedPackets": true,
+	"initiatorRelayIndex": true, "responderRelayIndex": true,
 }
 
 type LogField struct {
@@ -178,6 +182,21 @@ func appendAttr(fields []LogField, group string, a slog.Attr) []LogField {
 			fields = appendAttr(fields, key, sub)
 		}
 		return fields
+	}
+	// Nebula logs nested values as plain maps (`m{"stage": …}`), not slog groups.
+	// Expand them in key order so each entry is allowlisted on its own path.
+	if v.Kind() == slog.KindAny {
+		if nested, ok := v.Any().(map[string]any); ok {
+			keys := make([]string, 0, len(nested))
+			for k := range nested {
+				keys = append(keys, k)
+			}
+			sort.Strings(keys)
+			for _, k := range keys {
+				fields = appendAttr(fields, key, slog.Any(k, nested[k]))
+			}
+			return fields
+		}
 	}
 	// Formatting can be expensive (certificates, packets): skip disallowed keys first.
 	if !logFieldAllowlist[key] {

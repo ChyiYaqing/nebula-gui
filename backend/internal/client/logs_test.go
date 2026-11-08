@@ -58,6 +58,37 @@ func TestRingHandlerKeepsOnlyAllowlistedFields(t *testing.T) {
 	}
 }
 
+// Mirrors real handshake/relay logs from a 13.7.8 device: none of these fields may be hidden.
+func TestRingHandlerShowsNebulaHandshakeAndRelayFields(t *testing.T) {
+	ring := &logRing{}
+	l := slog.New(newRingHandler(ring)).With("vpnAddrs", []string{"192.0.2.10"}, "localIndex", 1, "remoteIndex", 0)
+	l.Info("Handshake timed out", "udpAddrs", []string{}, "initiatorIndex", 1, "durationNs", int64(5000000),
+		"handshake", map[string]any{"style": "ix_psk0", "stage": uint64(1)})
+	l.Info("Handshake message received", "from", "198.51.100.7:4242", "sentCachedPackets", 2)
+	l.Info("handleCreateRelayResponse", "relayFrom", "192.0.2.12", "initiatorRelayIndex", 7, "responderRelayIndex", 9)
+	l.Info("nested secret", "handshake", map[string]any{"stage": 1, "cert": pemSample})
+	got := ring.since(0)
+	for _, e := range got[:3] {
+		if e.Hidden != 0 {
+			t.Errorf("%q hid %d fields: %+v", e.Message, e.Hidden, e.Fields)
+		}
+	}
+	if v, _ := field(got[0], "handshake.stage"); v != "1" {
+		t.Errorf("handshake.stage = %q", v)
+	}
+	if v, _ := field(got[0], "handshake.style"); v != "ix_psk0" {
+		t.Errorf("handshake.style = %q", v)
+	}
+	// Map keys outside the allowlist stay hidden, and their values are never formatted.
+	if _, ok := field(got[3], "handshake.cert"); ok || got[3].Hidden != 1 {
+		t.Fatalf("nested disallowed key leaked: %+v", got[3])
+	}
+	raw, _ := json.Marshal(got)
+	if strings.Contains(string(raw), "BEGIN") {
+		t.Fatal("nested map leaked key material")
+	}
+}
+
 func TestRingHandlerLevelBoundsAndCapacity(t *testing.T) {
 	ring := &logRing{}
 	h := newRingHandler(ring)
