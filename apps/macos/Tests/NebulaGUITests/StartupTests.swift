@@ -52,6 +52,40 @@ extension AppModelTests {
         XCTAssertEqual(model.loginItemState, .enabled)
     }
 
+    /// Ad-hoc builds are a new, unregistered app to the system after every update (#67).
+    func testLaunchAtLoginChoiceSurvivesANewBuildIdentity() throws {
+        let defaults = isolatedDefaults()
+        let oldBuild = FakeLoginItem()
+        let first = try startupModel(controlledBackend(), defaults: defaults, loginItem: oldBuild)
+        first.setLaunchAtLogin(true)
+        XCTAssertEqual(oldBuild.state, .enabled)
+
+        let newBuild = FakeLoginItem() // Same user, new cdhash: not registered.
+        let updated = try startupModel(controlledBackend(), defaults: defaults, loginItem: newBuild)
+        XCTAssertEqual(newBuild.state, .enabled, "the new build registers itself")
+        XCTAssertEqual(updated.loginItemState, .enabled)
+        XCTAssertNil(updated.loginItemNotice)
+
+        let failing = FakeLoginItem(); failing.failNext = true
+        let broken = try startupModel(controlledBackend(), defaults: defaults, loginItem: failing)
+        XCTAssertEqual(broken.loginItemState, .disabled)
+        XCTAssertNotNil(broken.loginItemNotice)
+
+        updated.setLaunchAtLogin(false)
+        let afterOff = FakeLoginItem()
+        _ = try startupModel(controlledBackend(), defaults: defaults, loginItem: afterOff)
+        XCTAssertEqual(afterOff.state, .disabled, "a choice to stay off is never overridden")
+    }
+    func testLaunchAtLoginMigratesFromTheSystemRecord() throws {
+        let registered = FakeLoginItem(); registered.state = .enabled
+        let defaults = isolatedDefaults()
+        _ = try startupModel(controlledBackend(), defaults: defaults, loginItem: registered)
+        XCTAssertTrue(defaults.bool(forKey: "launchAtLogin"))
+        let fresh = isolatedDefaults(), unregistered = FakeLoginItem()
+        _ = try startupModel(controlledBackend(), defaults: fresh, loginItem: unregistered)
+        XCTAssertNil(fresh.object(forKey: "launchAtLogin"), "no choice is invented for a never-registered app")
+        XCTAssertEqual(unregistered.state, .disabled)
+    }
     func testTestsAndPreviewsNeverTouchTheSystemLoginItem() {
         let model = AppModel(client: controlledBackend())
         XCTAssertEqual(model.loginItemState, .unavailable)
