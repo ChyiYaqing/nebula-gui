@@ -17,7 +17,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-const HelperRelease = "0.4.0"
+const HelperRelease = "0.4.1"
 
 const HelperSocket = "/private/var/run/nebula-gui/helper.sock"
 const HelperExecutable = "/Library/PrivilegedHelperTools/net.nebula.gui/nebula-gui-helper"
