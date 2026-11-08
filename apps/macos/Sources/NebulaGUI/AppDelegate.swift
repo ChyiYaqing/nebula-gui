@@ -52,3 +52,12 @@ extension AppModel {
         RunLoop.main.perform { NSApp.terminate(nil) }
     }
 }
+
+/// Kept in this file: scripts/test-termination.sh compiles AppDelegate.swift on its own.
+enum LaunchContext {
+    /// True when loginwindow opened the app as a login item; such launches stay in the menu bar.
+    static func launchedAsLoginItem(_ event: NSAppleEventDescriptor?) -> Bool {
+        guard let event, event.eventID == AEEventID(kAEOpenApplication) else { return false }
+        return event.paramDescriptor(forKeyword: AEKeyword(keyAEPropData))?.enumCodeValue == OSType(keyAELaunchedAsLogInItem)
+    }
+}

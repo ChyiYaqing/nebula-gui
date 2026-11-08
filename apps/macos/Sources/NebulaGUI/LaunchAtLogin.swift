@@ -41,11 +41,3 @@ struct UnavailableLoginItem: LoginItemControl {
     func unregister() throws { throw BackendProblem(code: "preview_only", message: "合成预览与测试不修改系统登录项。") }
     func openSettings() {}
 }
-
-enum LaunchContext {
-    /// True when loginwindow opened the app as a login item; such launches stay in the menu bar.
-    static func launchedAsLoginItem(_ event: NSAppleEventDescriptor?) -> Bool {
-        guard let event, event.eventID == AEEventID(kAEOpenApplication) else { return false }
-        return event.paramDescriptor(forKeyword: AEKeyword(keyAEPropData))?.enumCodeValue == OSType(keyAELaunchedAsLogInItem)
-    }
-}
