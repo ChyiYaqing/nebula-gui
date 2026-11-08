@@ -19,8 +19,9 @@ type Service struct {
 	failure   *Problem
 	events    []Event
 	startedAt *time.Time
-	lastProbe time.Time
-	probe     func(context.Context, string, netip.Addr) (ProbeResult, error)
+	// lastSample and sampleOne back the periodic latency monitor (sample.go).
+	lastSample time.Time
+	sampleOne  func(context.Context, string, netip.Addr) LatencySample
 }
 
 func NewService(s *Store, e Engine) *Service { return &Service{store: s, engine: e, events: []Event{}} }
@@ -233,35 +234,8 @@ func (s *Service) invoke(r Request) (any, error) {
 		s.event("tunnel_stopped")
 		s.prune()
 		return s.status(), nil
-	case "probe":
-		state := s.status()
-		if state.State != "started" {
-			return nil, problem("not_connected", "请先连接网络，再测试节点。", "")
-		}
-		profile, _, err := s.store.Load(s.active)
-		if err != nil {
-			return nil, err
-		}
-		address, err := validateProbeTarget(r.Address, profile.Networks)
-		if err != nil {
-			return nil, err
-		}
-		if time.Since(s.lastProbe) < 3*time.Second {
-			return nil, problem("probe_rate_limited", "请稍候再测试节点。", "")
-		}
-		s.lastProbe = time.Now()
-		ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
-		defer cancel()
-		probe := s.probe
-		if probe == nil {
-			probe = probeNode
-		}
-		local, _ := probeSource(address, profile.Networks) // validateProbeTarget found the matching network.
-		result, err := probe(ctx, address.String(), local)
-		if err == nil {
-			s.event("node_probe_finished")
-		}
-		return result, err
+	case "sample":
+		return s.sample(r.Addresses)
 	case "recover":
 		worker, ok := s.engine.(interface{ RecoverChecked() error })
 		if !ok {
@@ -312,13 +286,18 @@ func DecodeRequest(b []byte) (Request, error) {
 	}
 	for k := range fields {
 		switch k {
-		case "version", "id", "method", "path", "profileID", "name", "digest", "files", "address":
+		case "version", "id", "method", "path", "profileID", "name", "digest", "files", "addresses":
 		default:
 			return r, problem("invalid_request", "请求包含未知字段。", "")
 		}
 	}
-	if json.Unmarshal(b, &r) != nil || len(r.ID) > 80 || len(r.Path) > 4096 || len(r.Name) > 160 || len(r.Files) > 3 || len(r.Address) > 64 {
+	if json.Unmarshal(b, &r) != nil || len(r.ID) > 80 || len(r.Path) > 4096 || len(r.Name) > 160 || len(r.Files) > 3 || len(r.Addresses) > 256 {
 		return r, problem("invalid_request", "请求字段无效或过长。", "")
+	}
+	for _, a := range r.Addresses {
+		if len(a) > 64 {
+			return r, problem("invalid_request", "请求字段无效或过长。", "")
+		}
 	}
 	for k, v := range r.Files {
 		if (k != "ca" && k != "cert" && k != "key") || len(v) > 4096 {

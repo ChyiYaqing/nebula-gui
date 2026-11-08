@@ -20,18 +20,14 @@ extension BackendClient: AppBackend {}
     /// Kernel logs are fetched only while the logs page is open.
     @Published var kernelLogs: KernelLogPage?
     var logsVisible = false
+    /// Latency history of the current connection, sampled only while the nodes page is open (#44).
+    @Published var latency = LatencyHistory()
+    /// Addresses whose detailed latency chart is open on the nodes page.
+    @Published var latencyExpanded: Set<String> = []
+    var nodesVisible = false
     @Published var recoveryText = ""
     @Published var connectionBusy = false
     @Published var automaticRecovery = true { didSet { recovery.setEnabled(automaticRecovery); recoveryTask?.cancel(); recoveryTask = nil; evaluateRecovery() } }
-    @Published var probeAddress = ""
-    /// The last node test of this app session, bound to the connection that started it.
-    @Published var probe: NodeProbe?
-    var probeBusy: Bool { probe?.running == true }
-    /// A finished test is shown only while its connection session is still the observed one.
-    var currentProbe: NodeProbe? {
-        guard let probe, status.isStarted, status.profileID == probe.profileID, status.startedAt == probe.startedAt else { return nil }
-        return probe
-    }
     @Published var notificationsBusy = false
     @Published var notificationsEnabled = false
     @Published var notificationText = "到期提醒未开启"
@@ -70,6 +66,8 @@ extension BackendClient: AppBackend {}
     /// Live kernel log polling, running only while the logs page is open.
     private var logTimer: Timer?
     private var refreshingLogs = false
+    private var sampleTimer: Timer?
+    private var sampling = false
     private let client: any AppBackend
     private let now: () -> Date
     private let wait: (TimeInterval) async throws -> Void
@@ -159,6 +157,7 @@ extension BackendClient: AppBackend {}
             guard generation == recovery.generation, !shuttingDown else { return }
             // Publish only real changes: every assignment re-renders the whole window.
             if !snapshot.sameObservation(as: status) { status = snapshot }
+            if latency.session != nil && latency.session != latencySession { latency.reset(); latencyExpanded = [] }
             let currentAuthorization = try await client.send(BackendRequest(method: "authorization"), as: AuthorizationState.self)
             guard generation == recovery.generation, !shuttingDown else { return }
             if currentAuthorization != authorization { authorization = currentAuthorization }
@@ -195,6 +194,31 @@ extension BackendClient: AppBackend {}
         logTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             Task { @MainActor in await self?.refreshLogs() }
         }
+    }
+    /// Identifies one connection: a reconnect or network switch starts a new history.
+    var latencySession: String? { status.isStarted ? "\(status.profileID ?? "")|\(status.startedAt ?? "")" : nil }
+    func showNodes(_ visible: Bool) {
+        nodesVisible = visible
+        startSampling()
+    }
+    private func startSampling() {
+        sampleTimer?.invalidate(); sampleTimer = nil
+        guard nodesVisible, servicesEnabled, !sleeping, !shuttingDown else { return }
+        Task { await sampleLatency() }
+        sampleTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
+            Task { @MainActor in await self?.sampleLatency() }
+        }
+    }
+    /// One ICMP echo per active peer address. Failures are skipped silently: the
+    /// manual node test and connection state report problems, not the monitor.
+    func sampleLatency() async {
+        guard nodesVisible, !shuttingDown, !sleeping, !sampling, let session = latencySession else { return }
+        let targets = LatencyTargets.of(status.peers)
+        guard !targets.isEmpty else { return }
+        sampling = true; defer { sampling = false }
+        guard let round = try? await client.send(BackendRequest(method: "sample", addresses: targets), as: LatencyRound.self),
+              latencySession == session, !shuttingDown else { return } // A changed session never receives old results.
+        latency.record(round, session: session)
     }
     /// A failed log read keeps the previous page; it must not mark the connection as failed.
     func refreshLogs() async {
@@ -256,7 +280,7 @@ extension BackendClient: AppBackend {}
         guard let selected else { return }
         recoveryTask?.cancel(); recoveryTask = nil
         let generation = recovery.userConnect(selected.id)
-        busy = true; connectionBusy = true; problem = nil; probe = nil
+        busy = true; connectionBusy = true; problem = nil
         defer { if generation == recovery.generation { busy = false; connectionBusy = false; evaluateRecovery() } }
         do {
             if status.state == "failed", transientCodes.contains(status.error?.code ?? "") {
@@ -287,7 +311,7 @@ extension BackendClient: AppBackend {}
         do {
             let disconnected = try await client.send(BackendRequest(method: "disconnect"), as: ConnectionStatus.self)
             guard generation == recovery.generation else { return }
-            status = disconnected; problem = nil; probe = nil
+            status = disconnected; problem = nil
         } catch {
             guard generation == recovery.generation else { return }
             setProblem(error)
@@ -393,7 +417,7 @@ extension BackendClient: AppBackend {}
         }
         shuttingDown = true
         recovery.userDisconnect(); recoveryTask?.cancel(); recoveryTask = nil; networkTask?.cancel(); recoveryText = ""
-        timer?.invalidate(); logTimer?.invalidate(); logTimer = nil
+        timer?.invalidate(); logTimer?.invalidate(); logTimer = nil; sampleTimer?.invalidate(); sampleTimer = nil
         do {
             try await client.shutdown(permanently: true); environmentMonitor?.stop()
             if let foregroundObserver { NotificationCenter.default.removeObserver(foregroundObserver); self.foregroundObserver = nil }
@@ -406,16 +430,6 @@ extension BackendClient: AppBackend {}
     }
 }
 
-struct NodeProbe: Identifiable {
-    let id = UUID()
-    let address: String
-    let profileID: String
-    let startedAt: String?
-    let generation: UInt64
-    var result: NodeProbeResult?
-    var problem: BackendProblem?
-    var running: Bool { result == nil && problem == nil }
-}
 
 extension AppModel {
     private var transientCodes: [String] { ["backend_stopped", "backend_unavailable", "cleanup_incomplete", "cleanup_pending", "authorization_required", "rebind_failed"] }
@@ -468,8 +482,8 @@ extension AppModel {
     func environmentChanged(_ event: ConnectionEnvironment.Event) {
         guard !shuttingDown else { return }
         switch event {
-        case .sleep: sleeping = true; timer?.invalidate(); logTimer?.invalidate(); logTimer = nil
-        case .wake: sleeping = false; startPolling(); startLogPolling()
+        case .sleep: sleeping = true; timer?.invalidate(); logTimer?.invalidate(); logTimer = nil; sampleTimer?.invalidate(); sampleTimer = nil
+        case .wake: sleeping = false; startPolling(); startLogPolling(); startSampling()
         case .network(let available): networkAvailable = available
         }
         recovery.environment(sleeping: sleeping, networkAvailable: networkAvailable)
@@ -491,24 +505,6 @@ extension AppModel {
                 self.setProblem(error); await self.refreshStatus()
             }
         }
-    }
-    /// Tests `target`, or the manual address. Only the started, selected network can be probed.
-    func testNode(_ target: String? = nil) async {
-        let address = (target ?? probeAddress).trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !probeBusy, !busy, !shuttingDown, !address.isEmpty, isCurrentStarted, let profileID = status.profileID else { return }
-        let started = NodeProbe(address: address, profileID: profileID, startedAt: status.startedAt, generation: recovery.generation)
-        probe = started
-        var outcome = started
-        do {
-            outcome.result = try await client.send(BackendRequest(method: "probe", address: address), as: NodeProbeResult.self)
-        } catch {
-            // Local feedback only: a probe error must not replace an unrelated connection problem.
-            outcome.problem = error as? BackendProblem ?? BackendProblem(code: "operation_failed", message: "测试未完成，请重试。")
-        }
-        guard probe?.id == started.id else { return }
-        let sameSession = !shuttingDown && started.generation == recovery.generation && status.isStarted
-            && status.profileID == started.profileID && status.startedAt == started.startedAt
-        probe = sameSession ? outcome : nil
     }
     /// Background reconciliation: retried every 5 minutes even on failure, reported locally
     /// so it never replaces an unrelated connection problem.
