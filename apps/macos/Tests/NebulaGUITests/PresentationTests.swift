@@ -56,6 +56,41 @@ extension AppModelTests {
         XCTAssertNotEqual(eventTime("2026-11-08T01:52:46Z"), "2026-11-08T01:52:46Z", "plain ISO 8601 parses")
         XCTAssertEqual(eventTime("not a date"), "not a date")
     }
+    func testLatencySamplingIsScopedToVisibleNodesAndCurrentSession() async throws {
+        let backend = controlledBackend(), model = try model(backend)
+        let peers = try JSONDecoder().decode([KnownPeer].self, from: Data(#"[{"name":"a","addresses":["192.0.2.12"],"pending":false},{"name":"p","addresses":["192.0.2.30"],"pending":true}]"#.utf8))
+        model.status = ConnectionStatus(state: "started", profileID: "first", error: nil, peers: peers, startedAt: "t1")
+        await model.sampleLatency() // Nodes page hidden: ControlledBackend fails on any request.
+        XCTAssertTrue(model.latency.isEmpty)
+        model.showNodes(true) // Test model: no services, so no timer is started.
+        func round(_ ms: Double) -> Data { Data(#"{"observedAt":"2026-11-08T04:00:00Z","samples":[{"address":"192.0.2.12","status":"reply","latencyMS":\#(ms)}]}"#.utf8) }
+        let first = backend.expect("sample")
+        let task = Task { await model.sampleLatency() }
+        await fulfillment(of: [first], timeout: 2)
+        XCTAssertEqual(backend.calls.last?.addresses, ["192.0.2.12"], "pending peers are never probed")
+        try backend.replyJSON("sample", data: round(9.5))
+        await task.value
+        XCTAssertEqual(model.latency.latest(for: "192.0.2.12")?.ms, 9.5)
+        // Reconnect while a round is in flight: its result belongs to the old session.
+        let second = backend.expect("sample")
+        let stale = Task { await model.sampleLatency() }
+        await fulfillment(of: [second], timeout: 2)
+        model.status = ConnectionStatus(state: "started", profileID: "first", error: nil, peers: peers, startedAt: "t2")
+        try backend.replyJSON("sample", data: round(50))
+        await stale.value
+        XCTAssertEqual(model.latency.points(for: "192.0.2.12").count, 1)
+        // A poll that sees the tunnel stopped clears the history.
+        let status = backend.expect("status"), authorization = backend.expect("authorization")
+        let poll = Task { await model.refreshStatus() }
+        await fulfillment(of: [status], timeout: 2)
+        try backend.replyJSON("status", data: Data(#"{"state":"disconnected","peers":[]}"#.utf8))
+        await fulfillment(of: [authorization], timeout: 2)
+        try backend.replyJSON("authorization", data: Data(#"{"available":true}"#.utf8))
+        await poll.value
+        XCTAssertTrue(model.latency.isEmpty)
+        model.showNodes(false)
+        _ = await model.shutdown()
+    }
     func testOverlappingLiveLogRefreshesSendOneRequest() async throws {
         let backend = controlledBackend(), model = try model(backend)
         model.showLogs(true) // Test model: no services, so no timer is started.

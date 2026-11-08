@@ -81,6 +81,19 @@ import NebulaClient
                 if scenario == "probe-error" { probe.problem = BackendProblem(code: "probe_rate_limited", message: "合成错误：请稍候再测试节点。") }
                 model.probe = probe; model.probeAddress = "192.0.2.99"
             }
+            if scenario.hasPrefix("monitor") {
+                // Synthetic five-minute history: a steady node, a jittery one with losses, a slow one.
+                let monitored = try! JSONDecoder().decode([KnownPeer].self, from: Data(#"[{"name":"开发主机","addresses":["192.0.2.12"],"pending":false},{"name":"文件服务器","addresses":["192.0.2.20"],"pending":false},{"name":"海外中继","addresses":["192.0.2.40"],"pending":false},{"name":"等待握手的测试节点","addresses":["192.0.2.30"],"pending":true}]"#.utf8))
+                model.status = ConnectionStatus(state: "started", profileID: first.id, error: nil, peers: monitored, startedAt: "2026-11-05T02:00:00Z")
+                for i in 0..<60 {
+                    let steady = 9 + 1.5 * sin(Double(i) / 4)
+                    let jitter: Double? = i % 13 == 7 ? nil : 38 + 22 * sin(Double(i) / 2.5) + Double(i % 5) * 3
+                    let slow = 185 + 25 * cos(Double(i) / 6)
+                    func sample(_ a: String, _ ms: Double?) -> LatencySample { LatencySample(address: a, status: ms == nil ? "timeout" : "reply", latencyMS: ms) }
+                    model.latency.record(LatencyRound(observedAt: "2026-11-05T02:05:00Z", samples: [sample("192.0.2.12", steady), sample("192.0.2.20", jitter), sample("192.0.2.40", slow)]), session: "preview")
+                }
+                model.latencyExpanded = ["192.0.2.20"]
+            }
             if scenario == "logs-upgrade" {
                 model.status = ConnectionStatus(state: "started", profileID: first.id, error: nil, peers: peers, startedAt: "2026-11-05T02:00:00Z")
                 model.authorization = try! JSONDecoder().decode(AuthorizationState.self, from: Data(#"{"available":true,"helperRelease":"0.3.1","updateRequired":true}"#.utf8))

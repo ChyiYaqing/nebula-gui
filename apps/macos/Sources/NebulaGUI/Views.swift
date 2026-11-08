@@ -59,11 +59,11 @@ struct MainView: View {
         .sheet(item: $model.renameTarget) { profile in RenameNetworkView(model: model, profile: profile) }
         .sheet(isPresented: $model.showAuthorizationReview) { AuthorizationReviewView(model: model) }
         .tint(Palette.accent)
-        .onChange(of: page) { item in visited.insert(item); model.showLogs(item == .logs) }
-        .onDisappear { model.showLogs(false) }
+        .onChange(of: page) { item in visited.insert(item); model.showLogs(item == .logs); model.showNodes(item == .nodes) }
+        .onDisappear { model.showLogs(false); model.showNodes(false) }
         .onAppear {
             if CommandLine.arguments.contains("--show-details") { page = .configuration }
-            visited.insert(page); model.showLogs(page == .logs)
+            visited.insert(page); model.showLogs(page == .logs); model.showNodes(page == .nodes)
             model.showDetails = true
             snapshotIfRequested()
         }

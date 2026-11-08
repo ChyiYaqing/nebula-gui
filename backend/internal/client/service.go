@@ -21,6 +21,9 @@ type Service struct {
 	startedAt *time.Time
 	lastProbe time.Time
 	probe     func(context.Context, string, netip.Addr) (ProbeResult, error)
+	// lastSample and sampleOne back the periodic latency monitor (sample.go).
+	lastSample time.Time
+	sampleOne  func(context.Context, string, netip.Addr) LatencySample
 }
 
 func NewService(s *Store, e Engine) *Service { return &Service{store: s, engine: e, events: []Event{}} }
@@ -262,6 +265,8 @@ func (s *Service) invoke(r Request) (any, error) {
 			s.event("node_probe_finished")
 		}
 		return result, err
+	case "sample":
+		return s.sample(r.Addresses)
 	case "recover":
 		worker, ok := s.engine.(interface{ RecoverChecked() error })
 		if !ok {
@@ -312,13 +317,18 @@ func DecodeRequest(b []byte) (Request, error) {
 	}
 	for k := range fields {
 		switch k {
-		case "version", "id", "method", "path", "profileID", "name", "digest", "files", "address":
+		case "version", "id", "method", "path", "profileID", "name", "digest", "files", "address", "addresses":
 		default:
 			return r, problem("invalid_request", "请求包含未知字段。", "")
 		}
 	}
-	if json.Unmarshal(b, &r) != nil || len(r.ID) > 80 || len(r.Path) > 4096 || len(r.Name) > 160 || len(r.Files) > 3 || len(r.Address) > 64 {
+	if json.Unmarshal(b, &r) != nil || len(r.ID) > 80 || len(r.Path) > 4096 || len(r.Name) > 160 || len(r.Files) > 3 || len(r.Address) > 64 || len(r.Addresses) > 256 {
 		return r, problem("invalid_request", "请求字段无效或过长。", "")
+	}
+	for _, a := range r.Addresses {
+		if len(a) > 64 {
+			return r, problem("invalid_request", "请求字段无效或过长。", "")
+		}
 	}
 	for k, v := range r.Files {
 		if (k != "ca" && k != "cert" && k != "key") || len(v) > 4096 {

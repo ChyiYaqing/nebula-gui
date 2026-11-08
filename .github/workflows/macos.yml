@@ -54,6 +54,8 @@ jobs:
           .build/bin/nebula-ui-preview --scenario connected --page logs --width 760 --snapshot build/CI/logs.png
           .build/bin/nebula-ui-preview --scenario connected --page logs --appearance dark --snapshot build/CI/logs-dark.png
           .build/bin/nebula-ui-preview --scenario logs-upgrade --page logs --width 760 --snapshot build/CI/logs-upgrade.png
+          .build/bin/nebula-ui-preview --scenario monitor --page nodes --width 760 --snapshot build/CI/monitor.png
+          .build/bin/nebula-ui-preview --scenario monitor --page nodes --appearance dark --snapshot build/CI/monitor-dark.png
           .build/bin/nebula-ui-preview --scenario unavailable --menu --appearance dark --snapshot build/CI/menu-dark.png
       # Synthetic preview data only: no credentials, real addresses or backend calls.
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

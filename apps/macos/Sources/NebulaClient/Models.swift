@@ -62,10 +62,11 @@ public struct BackendRequest: Encodable, Sendable {
     public var digest: String?
     public var files: [String: String]?
     public var address: String?
-    public init(method: String, path: String? = nil, profileID: String? = nil, name: String? = nil, digest: String? = nil, files: [String: String]? = nil, address: String? = nil) {
+    public var addresses: [String]?
+    public init(method: String, path: String? = nil, profileID: String? = nil, name: String? = nil, digest: String? = nil, files: [String: String]? = nil, address: String? = nil, addresses: [String]? = nil) {
         self.id = UUID().uuidString
         self.method = method; self.path = path; self.profileID = profileID
-        self.name = name; self.digest = digest; self.files = files; self.address = address
+        self.name = name; self.digest = digest; self.files = files; self.address = address; self.addresses = addresses
     }
 }
 private struct Envelope<T: Decodable>: Decodable {

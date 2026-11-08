@@ -77,6 +77,9 @@ struct NetworkNodes: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
             if model.isCurrentStarted {
+                LatencySummaryCard(history: model.latency, addresses: LatencyTargets.of(model.status.peers))
+            }
+            if model.isCurrentStarted {
                 VStack(alignment: .leading, spacing: 12) {
                     SectionTitle(title: "节点连通测试", symbol: "waveform.path.ecg")
                     HStack {
@@ -93,6 +96,7 @@ struct NetworkNodes: View {
             if model.status.profileID == profile.id {
                 PeerListView(peers: model.status.peers, canProbe: model.isCurrentStarted && !model.busy,
                     probeBusy: model.probeBusy, probe: model.currentProbe,
+                    latency: model.latency, monitoring: model.isCurrentStarted, expanded: $model.latencyExpanded,
                     copy: { model.copyNodeAddress($0) },
                     test: { address in Task { await model.testNode(address) } }).id(profile.id)
             } else {

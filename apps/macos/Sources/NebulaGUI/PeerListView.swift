@@ -6,6 +6,9 @@ struct PeerListView: View {
     let canProbe: Bool
     let probeBusy: Bool
     let probe: NodeProbe?
+    var latency = LatencyHistory()
+    var monitoring = false
+    @Binding var expanded: Set<String>
     let copy: (String) -> Void
     let test: (String) -> Void
     @State private var query = ""
@@ -47,12 +50,16 @@ struct PeerListView: View {
                             HStack(spacing: 8) {
                                 Text(address).monospaced().textSelection(.enabled).lineLimit(1).truncationMode(.middle)
                                     .frame(maxWidth: .infinity, alignment: .leading).help(address)
+                                if monitoring && !peer.pending { latencyCell(address) }
                                 CopyAddressButton(address: address, label: "复制节点地址 \(address)") { copy(address) }
                                 Button { test(address) } label: { Label("测试", systemImage: "waveform.path.ecg").frame(minHeight: 40) }
                                     .disabled(!canProbe || probeBusy).help("测试 \(address)")
                                     .accessibilityLabel("测试节点 \(address)")
                             }
                             if let probe, probe.address == address { ProbeFeedback(probe: probe, showsAddress: false) }
+                            if monitoring && !peer.pending && expanded.contains(address) {
+                                LatencyDetail(points: latency.points(for: address), stats: latency.stats(for: address))
+                            }
                           }
                         }
                     }.padding(.vertical, 6)
@@ -68,5 +75,27 @@ struct PeerListView: View {
         }.font(.caption)
         .onChange(of: query) { value in limit = 50; if value.count > 256 { query = String(value.prefix(256)) } }
         .onChange(of: filter) { _ in limit = 50 }
+    }
+    /// Latest value and a five-minute sparkline; the chevron opens the detailed chart.
+    private func latencyCell(_ address: String) -> some View {
+        let points = latency.points(for: address)
+        let latest = points.last
+        let grade = LatencyGrade.of(latest?.ms ?? nil)
+        let open = expanded.contains(address)
+        return Button {
+            if open { expanded.remove(address) } else { expanded.insert(address) }
+        } label: {
+            HStack(spacing: 8) {
+                Text(latest.map { latencyText($0.ms) } ?? "采样中")
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .foregroundStyle(latest == nil ? Color.secondary : grade.color)
+                    .frame(width: 58, alignment: .trailing)
+                LatencySparkline(points: points, color: grade.color).frame(width: 120, height: 26)
+                Image(systemName: open ? "chevron.up" : "chevron.down").foregroundStyle(.secondary).frame(width: 12)
+            }.frame(minHeight: 40)
+        }
+        .buttonStyle(PressStyle())
+        .help(open ? "收起延迟详情" : "查看延迟详情")
+        .accessibilityLabel("\(address) 延迟 \(latest.map { latencyText($0.ms) } ?? "采样中")，\(open ? "收起" : "展开")详情")
     }
 }

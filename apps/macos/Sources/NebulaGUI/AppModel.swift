@@ -20,6 +20,11 @@ extension BackendClient: AppBackend {}
     /// Kernel logs are fetched only while the logs page is open.
     @Published var kernelLogs: KernelLogPage?
     var logsVisible = false
+    /// Latency history of the current connection, sampled only while the nodes page is open (#44).
+    @Published var latency = LatencyHistory()
+    /// Addresses whose detailed latency chart is open on the nodes page.
+    @Published var latencyExpanded: Set<String> = []
+    var nodesVisible = false
     @Published var recoveryText = ""
     @Published var connectionBusy = false
     @Published var automaticRecovery = true { didSet { recovery.setEnabled(automaticRecovery); recoveryTask?.cancel(); recoveryTask = nil; evaluateRecovery() } }
@@ -70,6 +75,8 @@ extension BackendClient: AppBackend {}
     /// Live kernel log polling, running only while the logs page is open.
     private var logTimer: Timer?
     private var refreshingLogs = false
+    private var sampleTimer: Timer?
+    private var sampling = false
     private let client: any AppBackend
     private let now: () -> Date
     private let wait: (TimeInterval) async throws -> Void
@@ -159,6 +166,7 @@ extension BackendClient: AppBackend {}
             guard generation == recovery.generation, !shuttingDown else { return }
             // Publish only real changes: every assignment re-renders the whole window.
             if !snapshot.sameObservation(as: status) { status = snapshot }
+            if latency.session != nil && latency.session != latencySession { latency.reset(); latencyExpanded = [] }
             let currentAuthorization = try await client.send(BackendRequest(method: "authorization"), as: AuthorizationState.self)
             guard generation == recovery.generation, !shuttingDown else { return }
             if currentAuthorization != authorization { authorization = currentAuthorization }
@@ -195,6 +203,31 @@ extension BackendClient: AppBackend {}
         logTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             Task { @MainActor in await self?.refreshLogs() }
         }
+    }
+    /// Identifies one connection: a reconnect or network switch starts a new history.
+    var latencySession: String? { status.isStarted ? "\(status.profileID ?? "")|\(status.startedAt ?? "")" : nil }
+    func showNodes(_ visible: Bool) {
+        nodesVisible = visible
+        startSampling()
+    }
+    private func startSampling() {
+        sampleTimer?.invalidate(); sampleTimer = nil
+        guard nodesVisible, servicesEnabled, !sleeping, !shuttingDown else { return }
+        Task { await sampleLatency() }
+        sampleTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
+            Task { @MainActor in await self?.sampleLatency() }
+        }
+    }
+    /// One ICMP echo per active peer address. Failures are skipped silently: the
+    /// manual node test and connection state report problems, not the monitor.
+    func sampleLatency() async {
+        guard nodesVisible, !shuttingDown, !sleeping, !sampling, let session = latencySession else { return }
+        let targets = LatencyTargets.of(status.peers)
+        guard !targets.isEmpty else { return }
+        sampling = true; defer { sampling = false }
+        guard let round = try? await client.send(BackendRequest(method: "sample", addresses: targets), as: LatencyRound.self),
+              latencySession == session, !shuttingDown else { return } // A changed session never receives old results.
+        latency.record(round, session: session)
     }
     /// A failed log read keeps the previous page; it must not mark the connection as failed.
     func refreshLogs() async {
@@ -393,7 +426,7 @@ extension BackendClient: AppBackend {}
         }
         shuttingDown = true
         recovery.userDisconnect(); recoveryTask?.cancel(); recoveryTask = nil; networkTask?.cancel(); recoveryText = ""
-        timer?.invalidate(); logTimer?.invalidate(); logTimer = nil
+        timer?.invalidate(); logTimer?.invalidate(); logTimer = nil; sampleTimer?.invalidate(); sampleTimer = nil
         do {
             try await client.shutdown(permanently: true); environmentMonitor?.stop()
             if let foregroundObserver { NotificationCenter.default.removeObserver(foregroundObserver); self.foregroundObserver = nil }
@@ -468,8 +501,8 @@ extension AppModel {
     func environmentChanged(_ event: ConnectionEnvironment.Event) {
         guard !shuttingDown else { return }
         switch event {
-        case .sleep: sleeping = true; timer?.invalidate(); logTimer?.invalidate(); logTimer = nil
-        case .wake: sleeping = false; startPolling(); startLogPolling()
+        case .sleep: sleeping = true; timer?.invalidate(); logTimer?.invalidate(); logTimer = nil; sampleTimer?.invalidate(); sampleTimer = nil
+        case .wake: sleeping = false; startPolling(); startLogPolling(); startSampling()
         case .network(let available): networkAvailable = available
         }
         recovery.environment(sleeping: sleeping, networkAvailable: networkAvailable)

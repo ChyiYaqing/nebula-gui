@@ -67,7 +67,7 @@ func (*fakeEchoSocket) SetReadDeadline(time.Time) error  { return nil }
 func (*fakeEchoSocket) SetWriteDeadline(time.Time) error { return nil }
 func TestProbeMatchesPeerNonceSequenceAndReportsLoss(t *testing.T) {
 	for _, mismatch := range []bool{false, true} {
-		result, err := probeEcho(context.Background(), &fakeEchoSocket{mismatch: mismatch}, "10.73.0.3", time.Millisecond)
+		result, err := probeEcho(context.Background(), &fakeEchoSocket{mismatch: mismatch}, "10.73.0.3", time.Millisecond, 3)
 		if err != nil {
 			t.Fatal(err)
 		}

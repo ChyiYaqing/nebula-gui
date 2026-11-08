@@ -72,9 +72,9 @@ func probeNode(ctx context.Context, target string, local netip.Addr) (ProbeResul
 		return ProbeResult{}, err
 	}
 	defer conn.Close()
-	return probeEcho(ctx, conn, target, time.Second)
+	return probeEcho(ctx, conn, target, time.Second, 3)
 }
-func probeEcho(ctx context.Context, conn net.PacketConn, target string, wait time.Duration) (ProbeResult, error) {
+func probeEcho(ctx context.Context, conn net.PacketConn, target string, wait time.Duration, count int) (ProbeResult, error) {
 	result := ProbeResult{Address: target}
 	protocol, requestType, replyType := 1, icmp.Type(ipv4.ICMPTypeEcho), icmp.Type(ipv4.ICMPTypeEchoReply)
 	if netip.MustParseAddr(target).Is6() {
@@ -86,7 +86,7 @@ func probeEcho(ctx context.Context, conn net.PacketConn, target string, wait tim
 	}
 	var total time.Duration
 	buffer := make([]byte, 1500)
-	for sequence := 1; sequence <= 3; sequence++ {
+	for sequence := 1; sequence <= count; sequence++ {
 		if ctx.Err() != nil {
 			break
 		}
