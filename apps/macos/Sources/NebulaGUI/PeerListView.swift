@@ -3,14 +3,10 @@ import NebulaClient
 
 struct PeerListView: View {
     let peers: [KnownPeer]
-    let canProbe: Bool
-    let probeBusy: Bool
-    let probe: NodeProbe?
     var latency = LatencyHistory()
     var monitoring = false
     @Binding var expanded: Set<String>
     let copy: (String) -> Void
-    let test: (String) -> Void
     @State private var query = ""
     @State private var filter: PeerFilter = .all
     @State private var limit = 50
@@ -52,11 +48,7 @@ struct PeerListView: View {
                                     .frame(maxWidth: .infinity, alignment: .leading).help(address)
                                 if monitoring && !peer.pending { latencyCell(address) }
                                 CopyAddressButton(address: address, label: "复制节点地址 \(address)") { copy(address) }
-                                Button { test(address) } label: { Label("测试", systemImage: "waveform.path.ecg").frame(minHeight: 40) }
-                                    .disabled(!canProbe || probeBusy).help("测试 \(address)")
-                                    .accessibilityLabel("测试节点 \(address)")
                             }
-                            if let probe, probe.address == address { ProbeFeedback(probe: probe, showsAddress: false) }
                             if monitoring && !peer.pending && expanded.contains(address) {
                                 LatencyDetail(points: latency.points(for: address), stats: latency.stats(for: address))
                             }

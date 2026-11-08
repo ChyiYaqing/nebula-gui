@@ -90,10 +90,10 @@ func TestUnprivilegedICMPLoopback(t *testing.T) {
 	for _, target := range []string{"127.0.0.1", "::1"} {
 		ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
 		// Loopback stands in for the utun holding this device's Nebula address.
-		result, err := probeNode(ctx, target, netip.MustParseAddr(target))
+		sample := sampleNode(ctx, target, netip.MustParseAddr(target))
 		cancel()
-		if err != nil || result.Received != 3 {
-			t.Fatalf("%s: %+v, %v", target, result, err)
+		if sample.Status != "reply" || sample.LatencyMS == nil {
+			t.Fatalf("%s: %+v", target, sample)
 		}
 	}
 }

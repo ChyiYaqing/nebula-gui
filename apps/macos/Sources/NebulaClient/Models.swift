@@ -61,12 +61,11 @@ public struct BackendRequest: Encodable, Sendable {
     public var name: String?
     public var digest: String?
     public var files: [String: String]?
-    public var address: String?
     public var addresses: [String]?
-    public init(method: String, path: String? = nil, profileID: String? = nil, name: String? = nil, digest: String? = nil, files: [String: String]? = nil, address: String? = nil, addresses: [String]? = nil) {
+    public init(method: String, path: String? = nil, profileID: String? = nil, name: String? = nil, digest: String? = nil, files: [String: String]? = nil, addresses: [String]? = nil) {
         self.id = UUID().uuidString
         self.method = method; self.path = path; self.profileID = profileID
-        self.name = name; self.digest = digest; self.files = files; self.address = address; self.addresses = addresses
+        self.name = name; self.digest = digest; self.files = files; self.addresses = addresses
     }
 }
 private struct Envelope<T: Decodable>: Decodable {
@@ -100,7 +99,6 @@ public struct ConnectionEvent: Decodable, Sendable, Identifiable, Equatable {
         switch code {
         case "cleanup_confirmed": return "旧连接清理已确认"
         case "network_refresh_requested": return "已请求刷新网络连接"
-        case "node_probe_finished": return "节点连通测试完成"
         case "tunnel_started": return "隧道已启动"
         case "tunnel_stopped": return "已断开连接"
         case "profile_imported": return "配置已保存"
@@ -136,11 +134,3 @@ public struct KernelLogPage: Decodable, Sendable, Equatable {
     public let entries: [KernelLogEntry]
 }
 
-public struct NodeProbeResult: Decodable, Sendable {
-    public let address: String
-    public let sent: Int
-    public let received: Int
-    public let averageMS: Double?
-    public let observedAt: String
-    public var lossPercent: Int? { sent > 0 ? Int((Double(sent - received) / Double(sent) * 100).rounded()) : nil }
-}

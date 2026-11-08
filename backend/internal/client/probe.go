@@ -66,14 +66,6 @@ func probeSource(target netip.Addr, networks []string) (netip.Addr, bool) {
 	}
 	return netip.Addr{}, false
 }
-func probeNode(ctx context.Context, target string, local netip.Addr) (ProbeResult, error) {
-	conn, err := overlayProbeSocket(netip.MustParseAddr(target), local)
-	if err != nil {
-		return ProbeResult{}, err
-	}
-	defer conn.Close()
-	return probeEcho(ctx, conn, target, time.Second, 3)
-}
 func probeEcho(ctx context.Context, conn net.PacketConn, target string, wait time.Duration, count int) (ProbeResult, error) {
 	result := ProbeResult{Address: target}
 	protocol, requestType, replyType := 1, icmp.Type(ipv4.ICMPTypeEcho), icmp.Type(ipv4.ICMPTypeEchoReply)

@@ -22,6 +22,7 @@ func TestProbeSourceIsTheLocalAddressOfTheMatchingNetwork(t *testing.T) {
 // An address held by no interface must not fall back to the system routing
 // table. Sending through a bound interface is covered by TestUnprivilegedICMPLoopback.
 func TestProbeWithoutTheLocalInterfaceIsUnavailable(t *testing.T) {
-	_, err := probeNode(context.Background(), "127.0.0.1", netip.MustParseAddr("10.255.255.254"))
-	code(t, err, "probe_unavailable")
+	if sample := sampleNode(context.Background(), "127.0.0.1", netip.MustParseAddr("10.255.255.254")); sample.Status != "unavailable" {
+		t.Fatalf("sample without the Nebula interface = %+v", sample)
+	}
 }

@@ -39,7 +39,6 @@ type Request struct {
 	Name      string            `json:"name,omitempty"`
 	Digest    string            `json:"digest,omitempty"`
 	Files     map[string]string `json:"files,omitempty"`
-	Address   string            `json:"address,omitempty"`
 	Addresses []string          `json:"addresses,omitempty"`
 }
 type Response struct {

@@ -18,7 +18,7 @@ bash scripts/preview-ui.sh --build-only
   --snapshot /private/tmp/nebula-menu.png
 ```
 
-`--scenario` 支持 `empty`、`disconnected`、`connected`、`other`、`busy`、`missing`、`unavailable`、`failed`、`recovering`，以及另一网络失败或恢复时查看所选网络的 `failed-other`、`recovering-other`；节点测试反馈使用 `probe-running`、`probe-reply`、`probe-silent`、`probe-error`（17 个合成节点，配合 `--page nodes`）。`--page` 支持 `overview`、`nodes`、`configuration`。窗口最小宽度为 760，默认 900；`--appearance dark` 使用深色。快照生成后会核对渲染阶段没有向假后台发送请求。
+`--scenario` 支持 `empty`、`disconnected`、`connected`、`other`、`busy`、`missing`、`unavailable`、`failed`、`recovering`，以及另一网络失败或恢复时查看所选网络的 `failed-other`、`recovering-other`；节点延迟监测使用 `monitor`（三个活动节点的合成 5 分钟历史，其中一行展开，配合 `--page nodes`），日志页的升级提示使用 `logs-upgrade`。`--page` 支持 `overview`、`nodes`、`configuration`、`logs`。窗口最小宽度为 760，默认 900；`--height` 可加高窗口（最小 570，默认 720）；`--appearance dark` 使用深色。快照生成后会核对渲染阶段没有向假后台发送请求。
 
 `--disable-animations` 只关闭预览事务的动画，不伪装成系统“减少动态效果”设置。产品视图读取真实的 `accessibilityReduceMotion`；系统设置的实机验收应另记，不能用事务覆盖代替。
 

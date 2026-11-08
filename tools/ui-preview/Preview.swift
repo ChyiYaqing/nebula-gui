@@ -56,30 +56,13 @@ import NebulaClient
                 app.postEvent(NSEvent.otherEvent(with: .applicationDefined, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: 0, context: nil, subtype: 0, data1: 0, data2: 0)!, atStart: false)
                 return
             }
-            if ["connected", "other", "busy", "unavailable"].contains(scenario) || scenario.hasPrefix("probe-") {
+            if ["connected", "other", "busy", "unavailable"].contains(scenario) {
                 model.status = ConnectionStatus(state: "started", profileID: first.id, error: nil, peers: peers, startedAt: "2026-11-05T02:00:00Z")
                 if scenario == "other" { model.selectedID = second.id }
                 if scenario == "busy" { model.busy = true; model.connectionBusy = true }
                 // Synthetic, documentation-range addresses only.
                 model.events = try! JSONDecoder().decode([ConnectionEvent].self, from: Data(#"[{"time":"2026-11-05T02:00:00Z","code":"profile_imported"},{"time":"2026-11-05T02:00:03Z","code":"tunnel_started"},{"time":"2026-11-05T02:10:00Z","code":"node_probe_finished"}]"#.utf8))
                 model.kernelLogs = try! JSONDecoder().decode(KernelLogPage.self, from: Data(#"{"available":true,"entries":[{"seq":1,"time":"2026-11-05T02:00:02Z","level":"info","message":"Main HostMap created","fields":[{"key":"networks","value":"[192.0.2.10/24]"}]},{"seq":2,"time":"2026-11-05T02:00:03Z","level":"info","message":"Nebula interface is active","fields":[{"key":"interface","value":"utun7"},{"key":"networks","value":"[192.0.2.10/24]"},{"key":"version","value":"合成预览"}]},{"seq":3,"time":"2026-11-05T02:00:05Z","level":"info","message":"Handshake message received","fields":[{"key":"certName","value":"开发主机"},{"key":"vpnAddrs","value":"[192.0.2.12]"},{"key":"udpAddr","value":"198.51.100.20:4242"},{"key":"handshake.stage","value":"2"}],"hidden":1},{"seq":4,"time":"2026-11-05T02:00:20Z","level":"warn","message":"Handshake timed out","fields":[{"key":"vpnAddrs","value":"[192.0.2.30]"},{"key":"initiatorIndex","value":"1234567"}]},{"seq":5,"time":"2026-11-05T02:01:00Z","level":"error","message":"Failed to send handshake message","fields":[{"key":"error","value":"合成错误：network is unreachable"}],"hidden":2}]}"#.utf8))
-            }
-            if scenario.hasPrefix("probe-") {
-                // Many synthetic nodes: feedback must stay beside the tested row and above the list.
-                let many = try! JSONDecoder().decode([KnownPeer].self, from: Data(("[" + (1...14).map {
-                    #"{"name":"合成节点 \#($0)","addresses":["192.0.2.\#(40 + $0)"],"pending":\#($0 % 4 == 0)}"#
-                }.joined(separator: ",") + "]").utf8))
-                model.status = ConnectionStatus(state: "started", profileID: first.id, error: nil, peers: peers + many, startedAt: "2026-11-05T02:00:00Z")
-                var probe = NodeProbe(address: "192.0.2.41", profileID: first.id, startedAt: "2026-11-05T02:00:00Z", generation: 0)
-                let reply = #"{"address":"192.0.2.41","sent":3,"received":RECEIVED,"averageMS":AVERAGE,"observedAt":"2026-11-05T02:10:00Z"}"#
-                if scenario == "probe-reply" {
-                    probe.result = try! JSONDecoder().decode(NodeProbeResult.self, from: Data(reply.replacingOccurrences(of: "RECEIVED", with: "2").replacingOccurrences(of: "AVERAGE", with: "18.4").utf8))
-                }
-                if scenario == "probe-silent" {
-                    probe.result = try! JSONDecoder().decode(NodeProbeResult.self, from: Data(reply.replacingOccurrences(of: "RECEIVED", with: "0").replacingOccurrences(of: "AVERAGE", with: "null").utf8))
-                }
-                if scenario == "probe-error" { probe.problem = BackendProblem(code: "probe_rate_limited", message: "合成错误：请稍候再测试节点。") }
-                model.probe = probe; model.probeAddress = "192.0.2.99"
             }
             if scenario.hasPrefix("monitor") {
                 // Synthetic five-minute history: a steady node, a jittery one with losses, a slow one.
