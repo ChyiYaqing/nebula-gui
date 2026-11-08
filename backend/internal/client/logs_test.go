@@ -185,3 +185,31 @@ func TestServiceLogsReportsAvailability(t *testing.T) {
 		t.Fatal("kernel logs included in diagnostics export")
 	}
 }
+
+type shuffledPeersEngine struct {
+	fakeEngine
+	calls int
+}
+
+func (e *shuffledPeersEngine) Peers() []Peer {
+	e.calls++
+	peers := []Peer{{Name: "b", Addresses: []string{"192.0.2.20"}}, {Name: "p", Addresses: []string{"192.0.2.5"}, Pending: true}, {Name: "a", Addresses: []string{"192.0.2.10"}}}
+	if e.calls%2 == 0 { // Go map iteration order varies between calls.
+		peers[0], peers[2] = peers[2], peers[0]
+	}
+	return peers
+}
+
+func TestStatusPeerOrderIsStableAcrossPolls(t *testing.T) {
+	engine := &shuffledPeersEngine{}
+	s := NewService(openStore(t), engine)
+	first, _ := json.Marshal(s.status().Peers)
+	second, _ := json.Marshal(s.status().Peers)
+	if string(first) != string(second) {
+		t.Fatalf("peer order changed between polls:\n%s\n%s", first, second)
+	}
+	want := `[{"name":"a","addresses":["192.0.2.10"],"pending":false},{"name":"b","addresses":["192.0.2.20"],"pending":false},{"name":"p","addresses":["192.0.2.5"],"pending":true}]`
+	if string(first) != want {
+		t.Fatalf("order = %s", first)
+	}
+}
