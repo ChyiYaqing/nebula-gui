@@ -25,6 +25,22 @@ extension AppModelTests {
         XCTAssertNil(model.problem)
         _ = await model.shutdown()
     }
+    func testOverlappingLiveLogRefreshesSendOneRequest() async throws {
+        let backend = controlledBackend(), model = try model(backend)
+        model.showLogs(true) // Test model: no services, so no timer is started.
+        let requested = backend.expect("logs")
+        let first = Task { await model.refreshLogs() }
+        await fulfillment(of: [requested], timeout: 2)
+        await model.refreshLogs() // The 1 s tick while a read is pending: skipped, no second request.
+        XCTAssertEqual(backend.calls.filter { $0.method == "logs" }.count, 1)
+        try backend.replyJSON("logs", data: Data(#"{"available":true,"entries":[{"seq":1,"time":"2026-11-08T01:00:00Z","level":"info","message":"a","fields":[]},{"seq":2,"time":"2026-11-08T01:00:01Z","level":"info","message":"b","fields":[]}]}"#.utf8))
+        await first.value
+        XCTAssertEqual(model.kernelLogs?.entries.map(\.message), ["a", "b"], "oldest first; the view follows the bottom")
+        model.showLogs(false)
+        await model.refreshLogs()
+        XCTAssertEqual(backend.calls.filter { $0.method == "logs" }.count, 1)
+        _ = await model.shutdown()
+    }
     func testKernelLogNoticeExplainsAnOutdatedHelper() throws {
         let model = try model(controlledBackend())
         let decode = { (json: String) in try JSONDecoder().decode(KernelLogPage.self, from: Data(json.utf8)) }

@@ -67,6 +67,9 @@ extension BackendClient: AppBackend {}
     private var authorizationInProgress = false
     private var files: [String: String] = [:]
     private var timer: Timer?
+    /// Live kernel log polling, running only while the logs page is open.
+    private var logTimer: Timer?
+    private var refreshingLogs = false
     private let client: any AppBackend
     private let now: () -> Date
     private let wait: (TimeInterval) async throws -> Void
@@ -158,7 +161,6 @@ extension BackendClient: AppBackend {}
             authorization = try await client.send(BackendRequest(method: "authorization"), as: AuthorizationState.self)
             guard generation == recovery.generation, !shuttingDown else { return }
             if showDetails { events = try await client.send(BackendRequest(method: "events"), as: [ConnectionEvent].self) }
-            await refreshLogs()
             if snapshot.isStarted, let code = problem?.code, transientCodes.contains(code) { problem = nil }
         } catch {
             guard generation == recovery.generation, !shuttingDown else { return }
@@ -176,15 +178,23 @@ extension BackendClient: AppBackend {}
         if !page.available { return "当前连接后台不提供内核日志。" }
         return "暂无内核日志。连接网络后，Nebula 的启动、握手和错误信息会显示在这里。"
     }
-    /// Opening the page fetches at once instead of waiting for the next status poll.
+    /// While the logs page is open, kernel logs are fetched at once and then every second.
     func showLogs(_ visible: Bool) {
         logsVisible = visible
-        guard visible, servicesEnabled else { return }
+        startLogPolling()
+    }
+    private func startLogPolling() {
+        logTimer?.invalidate(); logTimer = nil
+        guard logsVisible, servicesEnabled, !sleeping, !shuttingDown else { return }
         Task { await refreshLogs() }
+        logTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+            Task { @MainActor in await self?.refreshLogs() }
+        }
     }
     /// A failed log read keeps the previous page; it must not mark the connection as failed.
     func refreshLogs() async {
-        guard logsVisible, !shuttingDown else { return }
+        guard logsVisible, !shuttingDown, !sleeping, !refreshingLogs else { return }
+        refreshingLogs = true; defer { refreshingLogs = false }
         if let page = try? await client.send(BackendRequest(method: "logs"), as: KernelLogPage.self) { kernelLogs = page }
     }
     func chooseImport(replacing: String? = nil) {
@@ -378,7 +388,7 @@ extension BackendClient: AppBackend {}
         }
         shuttingDown = true
         recovery.userDisconnect(); recoveryTask?.cancel(); recoveryTask = nil; networkTask?.cancel(); recoveryText = ""
-        timer?.invalidate()
+        timer?.invalidate(); logTimer?.invalidate(); logTimer = nil
         do {
             try await client.shutdown(permanently: true); environmentMonitor?.stop()
             if let foregroundObserver { NotificationCenter.default.removeObserver(foregroundObserver); self.foregroundObserver = nil }
@@ -451,8 +461,8 @@ extension AppModel {
     func environmentChanged(_ event: ConnectionEnvironment.Event) {
         guard !shuttingDown else { return }
         switch event {
-        case .sleep: sleeping = true; timer?.invalidate()
-        case .wake: sleeping = false; startPolling()
+        case .sleep: sleeping = true; timer?.invalidate(); logTimer?.invalidate(); logTimer = nil
+        case .wake: sleeping = false; startPolling(); startLogPolling()
         case .network(let available): networkAvailable = available
         }
         recovery.environment(sleeping: sleeping, networkAvailable: networkAvailable)

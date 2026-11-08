@@ -223,27 +223,44 @@ struct NetworkLogs: View {
     }
 }
 
+/// Live tail: oldest first, newest at the bottom, following new entries unless paused.
 struct KernelLogSection: View {
     @ObservedObject var model: AppModel
-    private var entries: [KernelLogEntry] { model.kernelLogs?.entries.reversed() ?? [] }
+    @State private var follow = true
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    private static let bottom = "kernel-log-bottom"
+    private var entries: [KernelLogEntry] { model.kernelLogs?.entries ?? [] }
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
                 SectionTitle(title: "Nebula 内核日志", symbol: "terminal")
                 Spacer()
+                Toggle("自动滚动", isOn: $follow).toggleStyle(.switch).controlSize(.small)
+                    .help("开启时跟随最新日志；向上查看历史时可关闭")
                 Button { copy() } label: { Label("复制", systemImage: "doc.on.doc") }
                     .disabled(entries.isEmpty).frame(minHeight: 32)
             }
-            Text("最近 300 条，仅在本机显示，不包含在诊断导出中。证书、数据包等字段不保存，只显示已隐藏的数量。")
+            Text("实时显示，每秒刷新，最新在底部。最近 300 条，仅在本机显示，不包含在诊断导出中；证书、数据包等字段不保存，只显示已隐藏的数量。")
                 .font(.caption).foregroundStyle(.secondary)
             if let notice = model.kernelLogNotice {
                 Text(notice).font(.callout).foregroundStyle(.secondary).padding(.vertical, 8)
             } else {
-                VStack(spacing: 0) {
-                    ForEach(Array(entries.enumerated()), id: \.element.id) { index, entry in
-                        if index > 0 { Divider() }
-                        row(entry)
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        LazyVStack(spacing: 0) {
+                            ForEach(Array(entries.enumerated()), id: \.element.id) { index, entry in
+                                if index > 0 { Divider() }
+                                row(entry)
+                            }
+                            Color.clear.frame(height: 1).id(Self.bottom)
+                        }.padding(.trailing, 8)
                     }
+                    .frame(height: 380)
+                    .onAppear { if follow { proxy.scrollTo(Self.bottom, anchor: .bottom) } }
+                    .onChange(of: entries.last?.id) { _ in
+                        if follow { withAnimation(reduceMotion ? nil : .easeOut(duration: 0.2)) { proxy.scrollTo(Self.bottom, anchor: .bottom) } }
+                    }
+                    .onChange(of: follow) { on in if on { proxy.scrollTo(Self.bottom, anchor: .bottom) } }
                 }
             }
         }.nebulaSurface()
@@ -268,7 +285,7 @@ struct KernelLogSection: View {
         switch level { case "error": return .red; case "warn": return .orange; default: return .secondary }
     }
     private func copy() {
-        let text = entries.reversed().map { "\($0.time) \($0.level.uppercased()) \($0.message) \($0.detail)" }.joined(separator: "\n")
+        let text = entries.map { "\($0.time) \($0.level.uppercased()) \($0.message) \($0.detail)" }.joined(separator: "\n")
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
     }

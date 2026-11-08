@@ -82,11 +82,20 @@ func TestHelperRelaysSessionLogsIncrementally(t *testing.T) {
 	if len(got) != 4 || got[3].Seq != 4 {
 		t.Fatalf("after polls: %v", messages(got))
 	}
+	// The live view pulls without waiting for the status poll.
+	engine.PullLogs()
+	if got = engine.LogsSince(0); len(got) != 5 {
+		t.Fatalf("after pull: %v", messages(got))
+	}
 	if err = engine.StopChecked(); err != nil {
 		t.Fatal(err)
 	}
-	if len(engine.LogsSince(0)) != 4 {
+	if len(engine.LogsSince(0)) != 5 {
 		t.Fatal("logs lost after disconnect")
+	}
+	engine.PullLogs() // Disconnected: a no-op, never a new helper session.
+	if len(engine.LogsSince(0)) != 5 {
+		t.Fatal("pull after disconnect changed logs")
 	}
 }
 

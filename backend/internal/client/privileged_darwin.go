@@ -170,7 +170,16 @@ func (e *PrivilegedEngine) exchange(method, config string) (helperReply, error) 
 
 // LogsSince serves the backend's copy, which outlives individual helper sessions.
 func (e *PrivilegedEngine) LogsSince(after uint64) []LogEntry { return e.logs.since(after) }
-func stringID(n uint64) string                                { return time.Unix(0, int64(n)).UTC().Format("150405.000000000") }
+
+// PullLogs asks the owning session for entries produced since its last reply,
+// so the live view is not limited to the 3 s status poll. Transport failures
+// are left to that poll, which owns connection failure handling.
+func (e *PrivilegedEngine) PullLogs() {
+	if e.conn != nil && e.helperRelease == HelperRelease {
+		_, _ = e.exchange("status", "")
+	}
+}
+func stringID(n uint64) string { return time.Unix(0, int64(n)).UTC().Format("150405.000000000") }
 func (e *PrivilegedEngine) Start(data []byte) error {
 	if e.warning != nil {
 		return e.warning

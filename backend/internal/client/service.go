@@ -100,6 +100,9 @@ func (s *Service) invoke(r Request) (any, error) {
 	case "logs":
 		// Live view only: kernel logs stay out of diagnostics, which excludes peer addresses.
 		if source, ok := s.engine.(logSource); ok {
+			if puller, ok := s.engine.(interface{ PullLogs() }); ok {
+				puller.PullLogs()
+			}
 			return LogPage{Available: true, Entries: source.LogsSince(0)}, nil
 		}
 		return LogPage{Available: false, Entries: []LogEntry{}}, nil
