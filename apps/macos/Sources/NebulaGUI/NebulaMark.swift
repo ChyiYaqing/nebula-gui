@@ -1,6 +1,19 @@
 import AppKit
 import SwiftUI
 
+/// Kept in this file: scripts/build.sh compiles NebulaMark.swift on its own for the app icon.
+enum MenuIconState: Equatable {
+    case connected, connecting, attention, disconnected
+    var accessibility: String {
+        switch self {
+        case .connected: return "Nebula 隧道已启动"
+        case .connecting: return "Nebula 正在连接或恢复"
+        case .attention: return "Nebula 需要处理"
+        case .disconnected: return "Nebula 未连接"
+        }
+    }
+}
+
 /// Original three-terminal mesh, shared by the app, sidebar and template status item.
 enum NebulaGlyph {
     static func path(in rect: CGRect) -> CGPath {

@@ -58,18 +58,6 @@ struct ConnectionStatusLabel: View {
     }
 }
 
-enum MenuIconState: Equatable {
-    case connected, connecting, attention, disconnected
-    var accessibility: String {
-        switch self {
-        case .connected: return "Nebula 隧道已启动"
-        case .connecting: return "Nebula 正在连接或恢复"
-        case .attention: return "Nebula 需要处理"
-        case .disconnected: return "Nebula 未连接"
-        }
-    }
-}
-
 /// "已连接 12 分钟" style duration since the tunnel started; nil when unknown.
 func connectedDuration(since startedAt: String?, now: Date) -> String? {
     guard let startedAt else { return nil }
