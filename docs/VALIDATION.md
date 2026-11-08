@@ -404,3 +404,5 @@ macOS 13.7.8／x86_64 的 rc1 安装失败：旧 `com.slack.nebula` 正在运行
 修复：脚本内新增 `stop_helper`，执行不带等待参数的 bootout，再有界轮询直到 launchd 不再列出服务、原进程已退出，三处统一调用。`UpgradeTests` 中的 launchctl 替身原本要求必须带 `--wait`，现改为模拟 macOS 13（带 `--wait` 返回 64），并增加 bootout 后服务短暂残留的场景和移除测试。
 
 本机在隔离 Swift 工程中运行实际 NebulaClient 源码：`UpgradeTests` 与 `AuthorizationTests` 共 11 项通过。用同一替身运行修复前的脚本，升级失败退出码为 64，移除为 75，与实机现象一致。实机升级随 #57 验收一起完成。
+
+实机（macOS 13.7.8／Intel，2026-11-08）：用叠加了本修复的 #59 CI 安装包，通过 GUI 先后完成两次升级：0.3.1 → 0.4.0、0.4.0 → 0.4.1。两次都换了新 pid，只有一个 helper 进程。已安装的 helper 与包内 SHA-256 一致；helper 和启动项为 root:wheel、0755／0644，socket 属于登录用户、0600；`-health` 通过；没有残留的备份文件或安装锁。之后通过 GUI 连接真实网络，隧道正常建立。
