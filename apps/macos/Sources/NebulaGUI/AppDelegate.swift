@@ -5,6 +5,26 @@ import AppKit
     /// Set by the menu bar label; reopens the single main window after it was closed.
     var openMainWindow: (() -> Void)?
     private var cleaningUp = false
+    /// Read before launch completes, while the opening Apple event is still current.
+    private var launchedAsLoginItem = false
+    private var hidOpeningWindow = false
+
+    // The opening event may be current in either callback, so both are checked.
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        launchedAsLoginItem = LaunchContext.launchedAsLoginItem(NSAppleEventManager.shared().currentAppleEvent)
+    }
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        launchedAsLoginItem = launchedAsLoginItem || LaunchContext.launchedAsLoginItem(NSAppleEventManager.shared().currentAppleEvent)
+    }
+    /// A login-item launch stays in the menu bar: the scene's opening window is closed once.
+    /// Windows the user opens later from the menu bar are never affected.
+    func mainWindowAppeared() {
+        guard launchedAsLoginItem, !hidOpeningWindow else { return }
+        hidOpeningWindow = true
+        DispatchQueue.main.async {
+            NSApp.windows.first { $0.isVisible && $0.title == "Nebula" }?.close()
+        }
+    }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         if !flag { openMainWindow?() }
