@@ -133,4 +133,3 @@ public struct KernelLogPage: Decodable, Sendable, Equatable {
     public let available: Bool
     public let entries: [KernelLogEntry]
 }
-
