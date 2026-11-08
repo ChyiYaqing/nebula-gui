@@ -10,6 +10,7 @@ struct MenuContent: View {
     /// Latency rows are limited so the panel stays short; the nodes page lists the rest.
     private static let nodeLimit = 6
     var body: some View {
+        VStack(spacing: 0) {
         VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 8) {
                 NebulaMark().fill(Palette.accent).frame(width: 24, height: 24)
@@ -38,14 +39,10 @@ struct MenuContent: View {
             if model.profiles.count > 1 { networkSection }
             Divider()
             toggles
-            Divider()
-            VStack(spacing: 0) {
-                menuRow("打开 Nebula", symbol: "macwindow") { showWindow() }
-                menuRow("导入网络…", symbol: "plus.circle") { showWindow(); model.chooseImport() }.disabled(model.busy)
-                menuRow("断开并退出", symbol: "power") { Task { await model.quit() } }
-            }
+        }.padding(16)
+        footer
         }
-        .padding(16).frame(width: 340).background(Palette.canvas).tint(Palette.accent)
+        .frame(width: 340).background(Palette.canvas).tint(Palette.accent)
         .onAppear { model.showMenu(true) }
         .onDisappear { model.showMenu(false) }
     }
@@ -154,11 +151,56 @@ struct MenuContent: View {
         }.frame(minHeight: 24)
     }
 
+    /// Bottom toolbar like other menu bar apps: the main entry with a label on the left,
+    /// compact icon actions with tooltips (and their shortcuts) on the right.
+    private var footer: some View {
+        HStack(spacing: 2) {
+            FooterButton(help: "打开 Nebula 主窗口", accessibility: "打开 Nebula") { showWindow() } label: {
+                Label("打开 Nebula", systemImage: "macwindow").font(.system(size: 12, weight: .medium))
+            }
+            Spacer(minLength: 8)
+            FooterButton(help: "导入网络…（⌘O）", accessibility: "导入网络") { showWindow(); model.chooseImport() } label: {
+                Image(systemName: "plus").font(.system(size: 13, weight: .medium))
+            }.disabled(model.busy)
+            FooterButton(help: "设置（⌘,）", accessibility: "设置") { model.requestedPage = .configuration; showWindow() } label: {
+                Image(systemName: "gearshape").font(.system(size: 13, weight: .medium))
+            }
+            FooterButton(help: "断开并退出 Nebula（⌘Q）", accessibility: "断开并退出 Nebula") { Task { await model.quit() } } label: {
+                Image(systemName: "power").font(.system(size: 13, weight: .medium))
+            }
+        }
+        .padding(.horizontal, 8).frame(height: 44)
+        .background(Palette.surface)
+        .overlay(alignment: .top) { Divider() }
+    }
+
     private func showWindow() { openWindow(id: "main"); NSApp.activate(ignoringOtherApps: true) }
     private func menuRow(_ title: String, symbol: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Label(title, systemImage: symbol).font(.system(size: 13))
                 .frame(maxWidth: .infinity, minHeight: 32, alignment: .leading).contentShape(Rectangle())
         }.buttonStyle(PressStyle())
+    }
+}
+
+/// Toolbar button with a hover highlight; the whole rounded area is clickable.
+private struct FooterButton<Content: View>: View {
+    let help: String
+    let accessibility: String
+    let action: () -> Void
+    @ViewBuilder let label: () -> Content
+    @State private var hovering = false
+    @Environment(\.isEnabled) private var enabled
+    var body: some View {
+        Button(action: action) {
+            label()
+                .foregroundStyle(enabled ? Color.primary : Color.secondary)
+                .padding(.horizontal, 8).frame(minWidth: 32, minHeight: 30)
+                .background(hovering && enabled ? Color.primary.opacity(0.08) : .clear, in: RoundedRectangle(cornerRadius: 6))
+        }
+        .buttonStyle(PressStyle())
+        .onHover { hovering = $0 }
+        .help(help)
+        .accessibilityLabel(accessibility)
     }
 }
