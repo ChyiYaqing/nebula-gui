@@ -20,10 +20,10 @@ struct MenuContent: View {
             if let profile {
                 networkCard(profile)
                 NetworkActionButton(title: model.menuActionTitle,
-                    symbol: model.authorization.available ? "power" : "lock.open", disconnecting: model.status.isStarted) {
+                    symbol: model.authorization.available ? "power" : "lock.open", disconnecting: model.status.isStarted, expands: true) {
                     if !model.status.isStarted && !model.authorization.available { showWindow() }
                     Task { if model.status.isStarted { await model.disconnect() } else { await model.connectSelected() } }
-                }.disabled(model.busy).frame(maxWidth: .infinity)
+                }.disabled(model.busy)
             } else {
                 Text("导入配置，把这台 Mac 加入你的网络。").font(.callout).foregroundStyle(.secondary)
             }
@@ -135,16 +135,23 @@ struct MenuContent: View {
 
     private var toggles: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Toggle("登录时打开 Nebula", isOn: Binding(
+            switchRow("登录时打开 Nebula", isOn: Binding(
                 get: { model.loginItemState == .enabled || model.loginItemState == .requiresApproval },
                 set: { model.setLaunchAtLogin($0) }))
                 .disabled(model.loginItemState == .unavailable)
             if model.loginItemState == .requiresApproval {
                 Button("需要在系统设置中允许…") { model.openLoginItemSettings() }.buttonStyle(.link).font(.caption)
             }
-            Toggle("启动后自动连接上次使用的网络", isOn: $model.autoConnect)
+            switchRow("启动后自动连接上次使用的网络", isOn: $model.autoConnect)
         }
-        .toggleStyle(.switch).controlSize(.mini).font(.system(size: 12))
+    }
+    /// Label on the left, switch aligned on the right edge like System Settings rows.
+    private func switchRow(_ title: String, isOn: Binding<Bool>) -> some View {
+        HStack {
+            Text(title).font(.system(size: 12))
+            Spacer(minLength: 8)
+            Toggle(title, isOn: isOn).labelsHidden().toggleStyle(.switch).controlSize(.mini)
+        }.frame(minHeight: 24)
     }
 
     private func showWindow() { openWindow(id: "main"); NSApp.activate(ignoringOtherApps: true) }
