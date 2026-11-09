@@ -37,6 +37,9 @@ struct MenuContent: View {
             if let problem = model.problem ?? model.status.error { ProblemView(problem: problem) }
             if model.status.isStarted, model.status.profileID == profile?.id { nodeSection }
             if model.profiles.count > 1 { networkSection }
+            if case .available(let update) = model.updateState {
+                menuRow("新版本 \(update.version) 可用", symbol: "arrow.down.circle") { model.requestedPage = .configuration; showWindow() }
+            }
             Divider()
             toggles
         }.padding(16)

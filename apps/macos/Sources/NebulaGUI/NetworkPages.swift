@@ -120,6 +120,8 @@ struct NetworkConfiguration: View {
             }.font(.caption).nebulaSurface()
             StartupSettings(model: model)
             Divider()
+            SoftwareUpdateSettings(model: model)
+            Divider()
             CertificateNotificationSettings(model: model)
             Divider()
             AuthorizationStatusView(model: model)
@@ -277,6 +279,55 @@ struct StartupSettings: View {
                 .toggleStyle(.switch).font(.system(size: 13, weight: .medium))
             Text(lastNetwork + "不会自动请求管理员授权；连接失败时按“连接中断后自动恢复”重试。")
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+        }
+    }
+}
+
+/// App updates (#69): checking is automatic, installing always needs the user's confirmation.
+struct SoftwareUpdateSettings: View {
+    @ObservedObject var model: AppModel
+    @State private var confirming = false
+    private var statusText: String {
+        switch model.updateState {
+        case .idle:
+            guard let last = model.lastUpdateCheck else { return model.automaticUpdateChecks ? "启动后会自动检查。" : "自动检查已关闭。" }
+            return "上次检查：" + last.formatted(date: .abbreviated, time: .shortened)
+        case .checking: return "正在检查更新…"
+        case .upToDate: return "已是最新版本。"
+        case .available(let update): return update.installable ? "发现新版本 \(update.version)。" : "发现新版本 \(update.version)，但缺少签名的更新包，请从发布页下载。"
+        case .installing(let update): return "正在下载并校验 \(update.version)…"
+        case .installed(let update): return "已安装 \(update.version)，正在重启；如未自动打开，请重新打开 Nebula。"
+        case .failed(let message, _): return message
+        }
+    }
+    private var failed: Bool { if case .failed = model.updateState { return true }; return false }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            SectionTitle(title: "软件更新", symbol: "arrow.down.circle")
+            LabeledContent("当前版本", value: model.currentVersionText).font(.caption)
+            Toggle("自动检查更新", isOn: $model.automaticUpdateChecks)
+                .toggleStyle(.switch).font(.system(size: 13, weight: .medium)).disabled(!model.updatesSupported)
+            Text(model.updatesSupported ? statusText : "当前运行方式不支持软件更新。").font(.caption)
+                .foregroundStyle(failed ? Color.orange : .secondary).fixedSize(horizontal: false, vertical: true)
+            HStack {
+                Button("检查更新") { Task { await model.checkForUpdates() } }
+                    .disabled(!model.updatesSupported || model.updateInProgress)
+                if let update = model.availableUpdate {
+                    if update.installable {
+                        Button("下载并安装 \(update.version.description)…") { confirming = true }
+                            .disabled(model.updateInProgress || model.busy)
+                    }
+                    Button("查看发布页") { model.openUpdatePage() }
+                }
+            }.frame(minHeight: 40)
+            Text("仅从 GitHub 公开发布页匿名查询，不发送配置或设备信息。更新包需通过内置签名校验；如新版本需要升级连接后台，安装后会另行提示。")
+                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+        }
+        .alert("安装 \(model.availableUpdate?.version.description ?? "")？", isPresented: $confirming) {
+            Button("安装并重启") { Task { await model.installUpdate() } }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text(model.status.isStarted ? "安装会断开当前连接并重启 Nebula，已保存的配置会保留。" : "安装后 Nebula 会自动重启，已保存的配置会保留。")
         }
     }
 }

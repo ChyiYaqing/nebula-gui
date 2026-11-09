@@ -14,6 +14,21 @@ import NebulaClient
     func shutdown(permanently: Bool) async throws {}
 }
 
+/// Synthetic release for the `update` scenario; never contacts the network or replaces the App.
+@MainActor struct PreviewUpdater: SoftwareUpdating {
+    let offer: Bool
+    var currentVersion: ReleaseVersion? { ReleaseVersion("0.1.0-rc1") }
+    func latest(after current: ReleaseVersion) async throws -> AvailableUpdate? {
+        guard offer else { return nil }
+        let page = URL(string: "https://github.com/ChyiYaqing/nebula-gui/releases/tag/v0.1.0-rc2")!
+        return AvailableUpdate(version: ReleaseVersion("0.1.0-rc2")!, page: page, archive: page, signature: page, archiveSize: 1)
+    }
+    func prepare(_ update: AvailableUpdate) async throws -> URL { throw BackendProblem(code: "preview_only", message: "合成预览不下载或安装更新。") }
+    func install(_ staged: URL) throws { throw BackendProblem(code: "preview_only", message: "合成预览不下载或安装更新。") }
+    func restart() {}
+    func openPage(_ update: AvailableUpdate) {}
+}
+
 @main struct UIPreview {
     @MainActor static func main() throws {
         let args = CommandLine.arguments
@@ -26,7 +41,8 @@ import NebulaClient
         let dark = option("--appearance") == "dark"
         app.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
         let backend = PreviewBackend()
-        let model = AppModel(client: backend, wait: { _ in try await Task.sleep(nanoseconds: 600_000_000_000) })
+        let model = AppModel(client: backend, wait: { _ in try await Task.sleep(nanoseconds: 600_000_000_000) },
+                             updater: PreviewUpdater(offer: option("--scenario") == "update" || args.contains("--verify-isolation")))
         let first = try JSONDecoder().decode(NetworkProfile.self, from: Data(#"{"id":"preview-first","name":"研发网络 · 合成预览","device":"preview-mac","networks":["192.0.2.10/24"],"fingerprint":"a012b345c678d901e234f567a890b123c456d789e012f345a678b901c234d567e890","expiresAt":"2030-01-01T00:00:00Z","importedAt":"2026-01-01T00:00:00Z","version":"preview","digest":"preview"}"#.utf8))
         let second = try JSONDecoder().decode(NetworkProfile.self, from: Data(#"{"id":"preview-second","name":"家庭网络 · 合成预览","device":"preview-mac","networks":["198.51.100.10/24"],"fingerprint":"preview","expiresAt":"2030-01-01T00:00:00Z","importedAt":"2026-01-01T00:00:00Z","version":"preview","digest":"preview"}"#.utf8))
         model.profiles = [first, second]; model.selectedID = first.id
@@ -53,7 +69,9 @@ import NebulaClient
                 precondition(model.problem == nil && model.notificationText == "合成预览不发送系统通知。" && !model.notificationsBusy && backend.calls == 0)
                 model.setLaunchAtLogin(true)
                 precondition(model.loginItemState == .unavailable && model.loginItemNotice != nil && backend.calls == 0)
-                print("PASS preview isolation: authorization runner, uninstall flow, notifications, test notification and login item rejected; no backend calls")
+                await model.checkForUpdates(); await model.installUpdate()
+                precondition(model.updateState == .failed("合成预览不下载或安装更新。", model.availableUpdate) && backend.calls == 0)
+                print("PASS preview isolation: authorization runner, uninstall flow, notifications, test notification, login item and software update rejected; no backend calls")
                 app.stop(nil)
                 app.postEvent(NSEvent.otherEvent(with: .applicationDefined, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: 0, context: nil, subtype: 0, data1: 0, data2: 0)!, atStart: false)
                 return
@@ -84,6 +102,7 @@ import NebulaClient
                 model.authorization = try! JSONDecoder().decode(AuthorizationState.self, from: Data(#"{"available":true,"helperRelease":"0.3.1","updateRequired":true}"#.utf8))
                 model.kernelLogs = try! JSONDecoder().decode(KernelLogPage.self, from: Data(#"{"available":true,"entries":[]}"#.utf8))
             }
+            if scenario == "update" { await model.checkForUpdates() }
             if scenario == "empty" { model.profiles = []; model.selectedID = nil }
             if scenario == "missing" || scenario == "unavailable" { model.authorization = .missing }
             if scenario == "failed" || scenario == "failed-other" {
