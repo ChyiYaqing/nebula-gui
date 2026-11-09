@@ -479,3 +479,28 @@ CI（M4）：新增 `MenuTests` 6 项，并新增菜单浅色和深色截图，�
 替身与临时目录覆盖：版本排序、草稿／RC 策略、缺少附件或签名、非 github.com 地址、超限大小、错误签名或公钥、bundle ID／版本不符、签名缺失或被篡改、符号链接、替换失败恢复原 App、DMG／App Translocation／无写权限位置。
 
 未完成：仓库目前为私有，App 匿名查询返回 404；`scripts/update-public-key` 为空，尚未配置 `NEBULA_UPDATE_SIGNING_KEY`。因此尚未进行真实 Release 的下载、替换和重启实机验收，也未在 Universal 包、Intel 或 macOS 13 上验证。这些需要维护者授权公开仓库、生成密钥并发布一个签名版本之后才能完成。
+
+## 2026-11-09 软件更新下载重试（Issue #74）
+
+起因（#71 实机验收）：本机 rc2（`/Applications/Nebula.app`）在「软件更新」里检查到 rc3，点「下载并安装」后显示「发布信息暂不可用（HTTP 504）」，原 App 未受影响。
+
+排查：
+- 本机走系统 HTTP/HTTPS 代理，出口落在 GitHub westus3 边缘节点。该节点对 rc3 `.zip.sig` 的发布页下载地址持续返回 `504 Gateway Time-out`，约 2 分钟内重试 8 次仍是 504。
+- 同一时间以下都正常：直连同一地址返回 302；rc2 的 `.sig` 正常；rc3 ZIP 正常；API 地址 `releases/assets/726273122` 加 `Accept: application/octet-stream` 返回 200，内容为 88 字节。
+
+修改：
+- 下载签名或更新包失败时，显示「下载更新包失败（HTTP n）…」或「下载更新包时无法连接 GitHub…」，代码为 `update_download_failed`。检查更新的提示不变。
+- 发布页地址下载失败时，改用 Releases API 返回的同一资源 API 地址重试一次。
+  - API 地址只接受 `https://api.github.com/repos/ChyiYaqing/nebula-gui/releases/assets/<数字>`。
+  - 超过大小上限不重试。签名、大小与包校验不变。
+
+本机验证（macOS 27.2／arm64）：`scripts/test.sh` 通过，包括 Go 测试、Swift 测试 106 项和退出探针 4 个场景；`git diff --check` 通过。
+- 新增 `SoftwareUpdateTests` 1 项：解析 API 地址，拒绝 http、其他仓库或主机、路径穿越、带查询参数的地址，以及缺少 `url` 字段的旧数据。
+- 新增 `UpdateDownloadTests` 4 项（URLProtocol 替身）：
+  - 504 后改用 API 地址并带 `Accept`；
+  - 主地址成功时不重试；
+  - 两个地址都失败或无法连接时显示下载失败提示；
+  - 超限时不重试。
+- 用 URLSession 走同一代理实测 rc3 `.sig`：发布页地址 504，API 地址 200，88 字节，跟随跳转后 `Accept` 头保留。
+
+rc2 内没有此修复，所以 rc2 → rc3 的实机验收需要临时绕过该节点，或等它恢复。重试路径的实机验证要等包含此修复的版本发布后，由该版本更新到下一个版本时完成。

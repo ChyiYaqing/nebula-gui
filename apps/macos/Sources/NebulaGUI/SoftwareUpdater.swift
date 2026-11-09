@@ -19,13 +19,16 @@ import NebulaClient
 struct GitHubSoftwareUpdater: SoftwareUpdating {
     let bundle: URL
     let info: [String: Any]
-    private let session: URLSession = {
+    private let session: URLSession
+    static let defaultSession: URLSession = {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = 30
         configuration.timeoutIntervalForResource = 600
         return URLSession(configuration: configuration)
     }()
-    init(bundle: Bundle = .main) { self.bundle = bundle.bundleURL; info = bundle.infoDictionary ?? [:] }
+    init(bundle: Bundle = .main, session: URLSession = Self.defaultSession) {
+        self.bundle = bundle.bundleURL; info = bundle.infoDictionary ?? [:]; self.session = session
+    }
 
     var currentVersion: ReleaseVersion? { (info["NebulaReleaseVersion"] as? String).flatMap { ReleaseVersion($0) } }
     private var userAgent: String { "NebulaGUI/\(currentVersion?.description ?? "unknown")" }
@@ -34,7 +37,7 @@ struct GitHubSoftwareUpdater: SoftwareUpdating {
         var request = URLRequest(url: UpdateCatalog.releasesURL)
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
         request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
-        let data = try await fetch(request, limit: 2 * 1024 * 1024)
+        let data = try await fetch(request, limit: 2 * 1024 * 1024, download: false)
         guard let releases = try? JSONDecoder().decode([UpdateRelease].self, from: data) else {
             throw BackendProblem(code: "update_check_failed", message: "无法读取发布信息，请稍后重试。")
         }
@@ -50,8 +53,8 @@ struct GitHubSoftwareUpdater: SoftwareUpdating {
         guard let identifier = info["CFBundleIdentifier"] as? String else {
             throw BackendProblem(code: "update_package_invalid", message: "无法确认当前 App 的标识。")
         }
-        let signature = try await fetch(URLRequest(url: signatureURL), limit: 1024)
-        let archive = try await fetch(URLRequest(url: archiveURL), limit: UpdateCatalog.maximumArchiveSize)
+        let signature = try await download(signatureURL, fallback: update.signatureAPI, limit: 1024)
+        let archive = try await download(archiveURL, fallback: update.archiveAPI, limit: UpdateCatalog.maximumArchiveSize)
         try UpdateSignature.verify(archive, signature: signature, publicKey: key)
         let staging = try UpdateInstaller.stagingDirectory(for: bundle)
         do {
@@ -85,12 +88,31 @@ struct GitHubSoftwareUpdater: SoftwareUpdating {
 
     func openPage(_ update: AvailableUpdate) { NSWorkspace.shared.open(update.page) }
 
-    private func fetch(_ request: URLRequest, limit: Int) async throws -> Data {
+    /// A single GitHub edge can fail one download URL while the API path to the same
+    /// asset works (#74), so a failed download is retried once through the API.
+    func download(_ url: URL, fallback: URL?, limit: Int) async throws -> Data {
+        do { return try await fetch(URLRequest(url: url), limit: limit, download: true) }
+        catch let problem as BackendProblem where problem.code == "update_download_failed" {
+            guard let fallback else { throw problem }
+            var request = URLRequest(url: fallback)
+            request.setValue("application/octet-stream", forHTTPHeaderField: "Accept")
+            request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
+            return try await fetch(request, limit: limit, download: true)
+        }
+    }
+
+    private func fetch(_ request: URLRequest, limit: Int, download: Bool) async throws -> Data {
         let data: Data, response: URLResponse
         do { (data, response) = try await session.data(for: request) }
-        catch { throw BackendProblem(code: "update_network", message: "无法连接 GitHub，请检查网络后重试。") }
+        catch {
+            throw download ? BackendProblem(code: "update_download_failed", message: "下载更新包时无法连接 GitHub，请检查网络后重试，或从发布页手动下载。")
+                           : BackendProblem(code: "update_network", message: "无法连接 GitHub，请检查网络后重试。")
+        }
         guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
             let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+            if download {
+                throw BackendProblem(code: "update_download_failed", message: "下载更新包失败（HTTP \(status)），请稍后重试，或从发布页手动下载。")
+            }
             throw BackendProblem(code: "update_check_failed", message: status == 403 || status == 429 ? "GitHub 暂时限制了查询，请稍后再试。" : "发布信息暂不可用（HTTP \(status)）。")
         }
         guard data.count <= limit else { throw BackendProblem(code: "update_package_invalid", message: "下载内容超过大小上限，已放弃。") }

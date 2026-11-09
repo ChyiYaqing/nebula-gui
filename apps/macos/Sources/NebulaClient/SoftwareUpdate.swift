@@ -42,7 +42,9 @@ public struct UpdateRelease: Decodable, Sendable {
         public let name: String
         public let size: Int
         public let browserDownloadURL: URL
-        enum CodingKeys: String, CodingKey { case name, size, browserDownloadURL = "browser_download_url" }
+        /// The same asset through the API; downloads with `Accept: application/octet-stream` (#74).
+        public let apiURL: URL?
+        enum CodingKeys: String, CodingKey { case name, size, browserDownloadURL = "browser_download_url", apiURL = "url" }
     }
     public let tagName: String
     public let draft: Bool
@@ -58,9 +60,14 @@ public struct AvailableUpdate: Equatable, Sendable {
     public let archive: URL?
     public let signature: URL?
     public let archiveSize: Int
+    /// API addresses of the same files, tried when the github.com download fails (#74).
+    public let archiveAPI: URL?
+    public let signatureAPI: URL?
     public var installable: Bool { archive != nil && signature != nil }
-    public init(version: ReleaseVersion, page: URL, archive: URL?, signature: URL?, archiveSize: Int) {
+    public init(version: ReleaseVersion, page: URL, archive: URL?, signature: URL?, archiveSize: Int,
+                archiveAPI: URL? = nil, signatureAPI: URL? = nil) {
         self.version = version; self.page = page; self.archive = archive; self.signature = signature; self.archiveSize = archiveSize
+        self.archiveAPI = archiveAPI; self.signatureAPI = signatureAPI
     }
 }
 
@@ -84,11 +91,21 @@ public enum UpdateCatalog {
         let name = archiveName(version)
         let archive = release.assets.first { $0.name == name && trusted($0.browserDownloadURL) && $0.size > 0 && $0.size <= maximumArchiveSize }
         let signature = release.assets.first { $0.name == name + ".sig" && trusted($0.browserDownloadURL) && $0.size <= 1024 }
+        let signed = archive == nil ? nil : signature
         return AvailableUpdate(version: version, page: release.htmlURL, archive: archive?.browserDownloadURL,
-                               signature: archive == nil ? nil : signature?.browserDownloadURL, archiveSize: archive?.size ?? 0)
+                               signature: signed?.browserDownloadURL, archiveSize: archive?.size ?? 0,
+                               archiveAPI: archive?.apiURL.flatMap(trustedAPI), signatureAPI: signed?.apiURL.flatMap(trustedAPI))
     }
     /// Release pages and downloads stay on github.com (downloads then redirect to GitHub's storage).
     static func trusted(_ url: URL) -> Bool { url.scheme == "https" && url.host == "github.com" }
+    /// Only this repository's asset endpoints: `https://api.github.com/repos/ChyiYaqing/nebula-gui/releases/assets/<id>`.
+    static func trustedAPI(_ url: URL) -> URL? {
+        let prefix = "https://api.github.com/repos/ChyiYaqing/nebula-gui/releases/assets/"
+        let text = url.absoluteString
+        let id = text.dropFirst(prefix.count)
+        guard text.hasPrefix(prefix), !id.isEmpty, id.count <= 20, id.allSatisfy({ ("0"..."9").contains($0) }) else { return nil }
+        return url
+    }
 }
 
 public enum UpdateSignature {

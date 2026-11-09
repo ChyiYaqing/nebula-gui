@@ -67,7 +67,7 @@ GUI（节点页可见，5 秒）→ 普通后台 sample：校验已连接、≤6
 配置页的「软件更新」显示当前版本，提供「自动检查更新」开关（默认开启）和「检查更新」按钮。
 
 - **检查**：匿名请求 GitHub 公开的 Releases API，不带令牌、配置或设备信息，只带 `NebulaGUI/<版本>` 作为 User-Agent。启动约 10 秒后检查一次，之后每小时判断一次，距上次成功检查不足 24 小时则跳过。草稿不提供；正式版只升级到更高的正式版；RC 可以升级到更高的 RC 或正式版。是否为 RC 只看版本号，不看 GitHub 的 prerelease 标记（ad-hoc 正式版也以 prerelease 发布）。检查失败只显示在本区域，不影响连接。
-- **安装**：用户点击「下载并安装」并确认后才执行，不会静默安装。依次执行：确认 App 位于当前用户可写的位置（不是 DMG、App Translocation 或无写权限的目录），下载 ZIP 与 `.zip.sig`，用内置 Ed25519 公钥校验签名，在同一卷的临时目录用 `ditto` 解压，核对 bundle ID、`NebulaReleaseVersion` 与发布版本一致，以及 `codesign --verify --deep --strict` 通过。然后通过两次重命名替换当前 App：第二步失败时恢复原 App。替换后 App 正常退出（断开连接并清理），由一个固定的 `/bin/sh` 脚本等待进程退出（最多 60 秒）后重新打开 App。
+- **安装**：用户点击「下载并安装」并确认后才执行，不会静默安装。依次执行：确认 App 位于当前用户可写的位置（不是 DMG、App Translocation 或无写权限的目录），下载 ZIP 与 `.zip.sig`（发布页下载地址失败时，改用同一资源在本仓库的 API 地址 `api.github.com/repos/ChyiYaqing/nebula-gui/releases/assets/<数字>` 再下载一次，见 #74；下载失败时提示 HTTP 状态并建议从发布页手动下载），用内置 Ed25519 公钥校验签名，在同一卷的临时目录用 `ditto` 解压，核对 bundle ID、`NebulaReleaseVersion` 与发布版本一致，以及 `codesign --verify --deep --strict` 通过。然后通过两次重命名替换当前 App：第二步失败时恢复原 App。替换后 App 正常退出（断开连接并清理），由一个固定的 `/bin/sh` 脚本等待进程退出（最多 60 秒）后重新打开 App。
 - **限制**：只更新 App 本身。新版本带有新的 helper 发布号时，安装后仍按现有流程提示“升级后台”，由用户授权。不支持降级。缺少签名附件的版本，或当前构建未内置公钥时，只提供「查看发布页」手动下载。
 - ad-hoc 签名只能证明包完整，不能证明来源，来源信任完全依赖独立的更新签名密钥，见 [发布说明](RELEASE.md#软件更新签名69)。
 
