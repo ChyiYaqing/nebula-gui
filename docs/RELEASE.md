@@ -16,6 +16,22 @@ tag 流程先执行完整测试与 Go vet，再 release 编译两种架构的 Sw
 
 独立 Ubuntu job 在所有触发方式下下载 artifact 并核对 SHA256SUMS，验证跨 job 传递后的目录与内容。仅 tag 事件的独立 job 持有 `contents: write`，下载并再次核对 artifact 后创建 **Draft prerelease** 并附加产物。PR／手动构建只有读权限，不读取 Apple 证书或其他仓库 secrets。上传使用 GitHub 自动提供的 `GITHUB_TOKEN`。
 
+## 软件更新签名（#69）
+
+App 内的软件更新只安装带有效 Ed25519 签名的 ZIP。`scripts/update-public-key` 保存公钥（Base64 编码的 32 字节原始公钥，可为空）。`build.sh` 校验格式后写入 Info.plist 的 `NebulaUpdatePublicKey`，`build-info.json` 的 `updatePublicKey` 记录同一值。公钥为空的构建只能检查更新、打开发布页，不能自动安装。
+
+tag 事件的草稿 job 从 `build-info.json` 读取公钥。公钥非空时，必须配置仓库 secret `NEBULA_UPDATE_SIGNING_KEY`（PEM 格式 Ed25519 私钥），且其公钥与 App 内置公钥一致，否则失败。签名后用公钥回验，上传 `Nebula-vX.Y.Z-macos-universal.zip.sig`（签名的 Base64 文本）。私钥只写入 runner 临时目录，权限 0600，步骤结束即删除。PR 与手动运行不读取该 secret。
+
+App 匿名访问 Releases API，前提是本仓库公开。一次性准备步骤（需维护者授权后执行；私钥不要放在仓库目录内）：
+
+```sh
+openssl genpkey -algorithm ed25519 -out ~/nebula-update-key.pem   # 需支持 Ed25519 的 OpenSSL 3
+gh secret set NEBULA_UPDATE_SIGNING_KEY < ~/nebula-update-key.pem
+openssl pkey -in ~/nebula-update-key.pem -pubout -outform DER | tail -c 32 | base64 > scripts/update-public-key
+```
+
+公钥经 PR 合入后，之后的 tag 才会生成签名。已发布的版本里没有这把公钥，因此从这些版本升级到第一个内置公钥的版本，仍需手动安装一次。轮换密钥时，必须先发布一个用旧密钥签名、但内置新公钥的版本；私钥丢失后，只能让用户手动安装一个内置新公钥的版本。私钥泄露时，应立即删除该 secret，并按丢失处理。
+
 ## 下载、重跑与回退
 
 在 Actions 运行详情下载 artifact；tag 对应的附件也可在仓库 Releases 的草稿中下载（需要仓库权限）。SHA256SUMS 覆盖 DMG、ZIP、manifest 和说明文本。普通用户不需要运行构建或校验终端命令。

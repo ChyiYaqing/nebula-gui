@@ -105,6 +105,35 @@ jobs:
         with:
           name: macos-release
           path: assets
+      # Software update signature (#69): only this tag job reads the signing secret.
+      - name: Sign update archive
+        env:
+          UPDATE_SIGNING_KEY: ${{ secrets.NEBULA_UPDATE_SIGNING_KEY }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd assets
+          sha256sum --check SHA256SUMS
+          PUBLIC_KEY="$(jq -r '.updatePublicKey // ""' build-info.json)"
+          if [ -z "$PUBLIC_KEY" ]; then
+            echo '::warning::No update public key in this build; the release cannot be installed automatically.'
+            exit 0
+          fi
+          [ -n "$UPDATE_SIGNING_KEY" ] || { echo 'NEBULA_UPDATE_SIGNING_KEY is not configured' >&2; exit 1; }
+          umask 077
+          KEY="$RUNNER_TEMP/update-key.pem"
+          trap 'rm -f "$KEY" "$RUNNER_TEMP/update.sig" "$RUNNER_TEMP/update-public.pem"' EXIT
+          printf '%s\n' "$UPDATE_SIGNING_KEY" > "$KEY"
+          [ "$(openssl pkey -in "$KEY" -pubout -outform DER | tail -c 32 | base64 -w0)" = "$PUBLIC_KEY" ] || {
+            echo 'Signing key does not match the public key embedded in the App' >&2
+            exit 1
+          }
+          ARCHIVE="Nebula-$RELEASE_TAG-macos-universal.zip"
+          openssl pkeyutl -sign -inkey "$KEY" -rawin -in "$ARCHIVE" -out "$RUNNER_TEMP/update.sig"
+          openssl pkey -in "$KEY" -pubout -out "$RUNNER_TEMP/update-public.pem"
+          openssl pkeyutl -verify -pubin -inkey "$RUNNER_TEMP/update-public.pem" -rawin -in "$ARCHIVE" -sigfile "$RUNNER_TEMP/update.sig"
+          base64 -w0 "$RUNNER_TEMP/update.sig" > "$ARCHIVE.sig"
       - name: Create or update draft only
         env:
           GH_TOKEN: ${{ github.token }}
@@ -124,7 +153,9 @@ jobs:
             gh release create "$RELEASE_TAG" --verify-tag --draft --prerelease \
               --title "Nebula GUI $RELEASE_TAG (internal validation)" --notes-file release-notes.md
           fi
+          SIGNATURE=()
+          [ ! -f "Nebula-$RELEASE_TAG-macos-universal.zip.sig" ] || SIGNATURE=("Nebula-$RELEASE_TAG-macos-universal.zip.sig")
           gh release upload "$RELEASE_TAG" \
             "Nebula-$RELEASE_TAG-macos-universal.dmg" \
             "Nebula-$RELEASE_TAG-macos-universal.zip" \
-            build-info.json release-notes.md SHA256SUMS --clobber
+            build-info.json release-notes.md SHA256SUMS "${SIGNATURE[@]}" --clobber

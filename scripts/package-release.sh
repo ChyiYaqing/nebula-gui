@@ -48,6 +48,7 @@ info = plistlib.loads((staging / "image/Nebula.app/Contents/Info.plist").read_by
 manifest = {
     "schema": 1, "version": sys.argv[4], "distribution": "internal-adhoc",
     "applicationVersion": info["CFBundleShortVersionString"], "buildNumber": info["CFBundleVersion"],
+    "updatePublicKey": info["NebulaUpdatePublicKey"],
     "configuration": "release", "sourceRevision": command("git", "rev-parse", "HEAD"),
     "sourceDirty": bool(command("git", "status", "--porcelain")),
     "kernelRevision": (root / "scripts/kernel-revision").read_text().strip(),

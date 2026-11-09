@@ -50,6 +50,12 @@ extension BackendClient: AppBackend {}
     @Published var notificationsEnabled = false
     @Published var notificationText = "到期提醒未开启"
     @Published var upgradingAuthorization = false
+    /// Software update (#69): nil in tests, previews and isolated --data-dir runs.
+    private let updater: (any SoftwareUpdating)?
+    @Published private(set) var updateState = UpdateState.idle
+    @Published var automaticUpdateChecks = true { didSet { defaults.set(automaticUpdateChecks, forKey: Self.automaticUpdatesKey) } }
+    private static let automaticUpdatesKey = "automaticUpdateChecks", lastUpdateCheckKey = "lastUpdateCheck"
+    private var updateTimer: Timer?
     private var recovery = SessionRecovery()
     private var recoveryTask: Task<Void, Never>?
     private var networkTask: Task<Void, Never>?
@@ -136,8 +142,9 @@ extension BackendClient: AppBackend {}
          wait: @escaping (TimeInterval) async throws -> Void = { seconds in
              try await Task.sleep(nanoseconds: UInt64(max(0, seconds) * 1_000_000_000))
          }, notifications: CertificateNotifications? = nil,
-         defaults: UserDefaults? = nil, loginItem: (any LoginItemControl)? = nil) {
-        self.client = client; self.now = now; self.wait = wait
+         defaults: UserDefaults? = nil, loginItem: (any LoginItemControl)? = nil,
+         updater: (any SoftwareUpdating)? = nil) {
+        self.client = client; self.now = now; self.wait = wait; self.updater = updater
         notificationsAllowed = false; injectedNotifications = notifications
         // Tests and previews get a private, emptied domain and never the system login item.
         self.defaults = defaults ?? {
@@ -147,6 +154,7 @@ extension BackendClient: AppBackend {}
         }()
         self.loginItem = loginItem ?? UnavailableLoginItem()
         autoConnect = self.defaults.bool(forKey: Self.autoConnectKey)
+        automaticUpdateChecks = self.defaults.object(forKey: Self.automaticUpdatesKey) as? Bool ?? true
         loginItemState = self.loginItem.state
         reconcileLoginItem()
     }
@@ -163,7 +171,8 @@ extension BackendClient: AppBackend {}
         // An isolated --data-dir development run keeps away from real settings and login items.
         let isolated = argument("--data-dir") != nil
         self.init(client: BackendClient(executable: executable, store: store),
-                  defaults: isolated ? nil : .standard, loginItem: isolated ? nil : SystemLoginItem())
+                  defaults: isolated ? nil : .standard, loginItem: isolated ? nil : SystemLoginItem(),
+                  updater: isolated ? nil : GitHubSoftwareUpdater())
         servicesEnabled = true
         notificationsAllowed = argument("--data-dir") == nil
         notificationsEnabled = certificateNotifications.enabled
@@ -179,6 +188,7 @@ extension BackendClient: AppBackend {}
             Task { @MainActor in self?.refreshLoginItem(); await self?.refreshNotifications() }
         }
         startPolling()
+        startUpdateChecks()
     }
     private func startPolling() {
         guard servicesEnabled else { return }
@@ -520,12 +530,13 @@ extension BackendClient: AppBackend {}
         shuttingDown = true
         recovery.userDisconnect(); recoveryTask?.cancel(); recoveryTask = nil; networkTask?.cancel(); recoveryText = ""
         timer?.invalidate(); logTimer?.invalidate(); logTimer = nil; sampleTimer?.invalidate(); sampleTimer = nil
+        updateTimer?.invalidate(); updateTimer = nil
         do {
             try await client.shutdown(permanently: true); environmentMonitor?.stop()
             if let foregroundObserver { NotificationCenter.default.removeObserver(foregroundObserver); self.foregroundObserver = nil }
             return true
         }
-        catch { shuttingDown = false; busy = false; connectionBusy = false; setProblem(error); startPolling(); return false }
+        catch { shuttingDown = false; busy = false; connectionBusy = false; setProblem(error); startPolling(); startUpdateChecks(); return false }
     }
     func setProblem(_ error: Error) {
         problem = error as? BackendProblem ?? BackendProblem(code: "operation_failed", message: "操作未完成，请重试。")
@@ -647,5 +658,88 @@ extension AppModel {
     /// Shown in the notification section only; the next refresh replaces it with the system state.
     private func notificationFailure(_ error: Error) -> String {
         (error as? BackendProblem)?.message ?? "通知操作未完成，请重试。"
+    }
+}
+
+/// Software update (#69). Checking never touches the connection; installing replaces only
+/// the App and then quits, which disconnects like any other quit.
+enum UpdateState: Equatable {
+    case idle, checking, upToDate
+    case available(AvailableUpdate)
+    case installing(AvailableUpdate)
+    case installed(AvailableUpdate)
+    /// The update, when known, stays reachable through its release page.
+    case failed(String, AvailableUpdate?)
+}
+
+extension AppModel {
+    var updatesSupported: Bool { updater?.currentVersion != nil }
+    var currentVersionText: String { updater?.currentVersion?.description ?? "开发版本" }
+    var availableUpdate: AvailableUpdate? {
+        switch updateState {
+        case .available(let update), .installing(let update), .installed(let update): return update
+        case .failed(_, let update): return update
+        default: return nil
+        }
+    }
+    var updateInProgress: Bool {
+        switch updateState { case .checking, .installing, .installed: return true; default: return false }
+    }
+    var lastUpdateCheck: Date? { defaults.object(forKey: Self.lastUpdateCheckKey) as? Date }
+
+    /// At launch (after a short delay) and hourly; a check runs at most once a day.
+    fileprivate func startUpdateChecks() {
+        guard servicesEnabled, updater != nil else { return }
+        updateTimer?.invalidate()
+        updateTimer = Timer.scheduledTimer(withTimeInterval: 3600, repeats: true) { [weak self] _ in
+            Task { @MainActor in await self?.checkForUpdatesIfDue() }
+        }
+        Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 10_000_000_000)
+            await self?.checkForUpdatesIfDue()
+        }
+    }
+    func checkForUpdatesIfDue() async {
+        guard automaticUpdateChecks else { return }
+        if let last = lastUpdateCheck, now().timeIntervalSince(last) < 24 * 3600 { return }
+        await checkForUpdates()
+    }
+    func checkForUpdates() async {
+        guard let updater, let current = updater.currentVersion, !updateInProgress, !shuttingDown else { return }
+        updateState = .checking
+        do {
+            let found = try await updater.latest(after: current)
+            guard !shuttingDown else { return }
+            defaults.set(now(), forKey: Self.lastUpdateCheckKey)
+            updateState = found.map(UpdateState.available) ?? .upToDate
+        } catch {
+            guard !shuttingDown else { return }
+            updateState = .failed(updateMessage(error), nil)
+        }
+    }
+    /// Called after the user confirmed that the connection will be interrupted.
+    func installUpdate() async {
+        guard let updater, let update = availableUpdate, update.installable, !updateInProgress, !shuttingDown else { return }
+        guard !busy, !authorizationInProgress else {
+            updateState = .failed("请等待当前操作完成后再安装更新。", update); return
+        }
+        updateState = .installing(update)
+        do {
+            let staged = try await updater.prepare(update)
+            guard !shuttingDown else { return }
+            try updater.install(staged)
+            updateState = .installed(update)
+            updater.restart()
+        } catch {
+            guard !shuttingDown else { return }
+            updateState = .failed(updateMessage(error), update)
+        }
+    }
+    func openUpdatePage() {
+        guard let updater, let update = availableUpdate else { return }
+        updater.openPage(update)
+    }
+    private func updateMessage(_ error: Error) -> String {
+        (error as? BackendProblem)?.message ?? "更新未完成，请稍后重试。"
     }
 }

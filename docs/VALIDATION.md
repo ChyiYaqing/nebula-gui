@@ -469,3 +469,13 @@ CI（M4）：新增 `MenuTests` 6 项，并新增菜单浅色和深色截图，�
 实机：每装一个新构建，「登录时打开 Nebula」都会复位为关闭，用户重新开启后，系统登录项中出现两个同名的 Nebula。`sfltool dumpbtm` 显示两条 `app` 类型的记录，URL 都是 `/Applications/Nebula.app`，标识分别为不同的 cdhash，其中一条与当前构建一致。原因是 ad-hoc 签名没有 Team ID，系统只能按 cdhash 识别 App。
 
 修复：在 UserDefaults 中记住用户的选择，新构建启动时用新身份自动注册。之前从未记录过选择、但当前身份已注册时，视为已开启；选择关闭时不做任何操作。旧构建的记录无法由 App 删除，需要在系统设置中移除；根本解决依赖 Developer ID 签名（#8）。CI 新增 2 项测试，全部通过。实机步骤：清理旧记录后，安装包含本修复的构建并开启一次，此后更新构建时开关保持开启。
+
+## 2026-11-09 软件更新（Issue #69）
+
+配置页新增「软件更新」：自动检查（默认开启，每天至多一次）、手动检查；有新版本时，用户确认后下载、校验 Ed25519 签名与包内容，替换 App 并重启。菜单栏显示新版本入口。Release 的 tag 草稿 job 用 secret 签名 ZIP 并上传 `.zip.sig`。设计见 [日常体验](DAILY_USE.md#软件更新69) 与 [发布说明](RELEASE.md#软件更新签名69)。
+
+本机（macOS 27.2／arm64）：`scripts/test.sh` 通过，包括 Go race、Swift 测试 101 项（新增 `SoftwareUpdateTests` 8 项、`UpdateTests` 6 项）和退出探针 4 个场景；`go vet`、`git diff --check` 通过。预览隔离新增软件更新检查，生成 `update` 场景浅色、深色及菜单截图。互通检查：用 OpenSSL 生成临时 Ed25519 密钥，按 CI 同样的命令签名真实构建的 ZIP，CryptoKit 验签通过，解压后 bundle ID、版本与 `codesign --strict` 校验通过；翻转 1 字节后验签被拒绝。临时私钥已删除。重启脚本以参数传递路径，含分号的路径不会被执行。
+
+替身与临时目录覆盖：版本排序、草稿／RC 策略、缺少附件或签名、非 github.com 地址、超限大小、错误签名或公钥、bundle ID／版本不符、签名缺失或被篡改、符号链接、替换失败恢复原 App、DMG／App Translocation／无写权限位置。
+
+未完成：仓库目前为私有，App 匿名查询返回 404；`scripts/update-public-key` 为空，尚未配置 `NEBULA_UPDATE_SIGNING_KEY`。因此尚未进行真实 Release 的下载、替换和重启实机验收，也未在 Universal 包、Intel 或 macOS 13 上验证。这些需要维护者授权公开仓库、生成密钥并发布一个签名版本之后才能完成。

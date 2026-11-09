@@ -27,10 +27,13 @@ swiftc -parse-as-library "$ROOT/apps/macos/Sources/NebulaGUI/NebulaMark.swift" "
 ICONSET="$ROOT/.build/Nebula.iconset"
 "$ROOT/.build/bin/generate-icon" "$ICONSET"
 /usr/bin/iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/AppIcon.icns"
-python3 - "$APP/Contents/Info.plist" "$APP_VERSION" "$VERSION" <<'PY'
+# Ed25519 public key (Base64, raw 32 bytes) for software updates (#69); empty disables installing.
+UPDATE_KEY="$(tr -d '[:space:]' < "$ROOT/scripts/update-public-key")"
+[[ -z "$UPDATE_KEY" || "$UPDATE_KEY" =~ ^[A-Za-z0-9+/]{43}=$ ]] || { echo "Invalid update public key" >&2; exit 1; }
+python3 - "$APP/Contents/Info.plist" "$APP_VERSION" "$VERSION" "$UPDATE_KEY" <<'PY'
 import plistlib,sys
 with open(sys.argv[1],'wb') as f:
- plistlib.dump({'CFBundleName':'Nebula','CFBundleDisplayName':'Nebula','CFBundleIdentifier':'net.nebula.gui.development','CFBundleExecutable':'NebulaGUI','CFBundlePackageType':'APPL','CFBundleIconFile':'AppIcon.icns','CFBundleShortVersionString':sys.argv[2],'NebulaReleaseVersion':sys.argv[3],'CFBundleVersion':'6','LSMinimumSystemVersion':'13.0','NSHighResolutionCapable':True,'NSSupportsAutomaticTermination':False,'NSHumanReadableCopyright':'Nebula GUI development build'},f)
+ plistlib.dump({'NebulaUpdatePublicKey':sys.argv[4],'CFBundleName':'Nebula','CFBundleDisplayName':'Nebula','CFBundleIdentifier':'net.nebula.gui.development','CFBundleExecutable':'NebulaGUI','CFBundlePackageType':'APPL','CFBundleIconFile':'AppIcon.icns','CFBundleShortVersionString':sys.argv[2],'NebulaReleaseVersion':sys.argv[3],'CFBundleVersion':'6','LSMinimumSystemVersion':'13.0','NSHighResolutionCapable':True,'NSSupportsAutomaticTermination':False,'NSHumanReadableCopyright':'Nebula GUI development build'},f)
 PY
 codesign --force --sign - "$APP/Contents/Helpers/nebula-gui-backend"
 codesign --force --sign - "$APP/Contents/Helpers/nebula-gui-helper"
