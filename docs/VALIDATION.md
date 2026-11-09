@@ -504,3 +504,31 @@ CI（M4）：新增 `MenuTests` 6 项，并新增菜单浅色和深色截图，�
 - 用 URLSession 走同一代理实测 rc3 `.sig`：发布页地址 504，API 地址 200，88 字节，跟随跳转后 `Accept` 头保留。
 
 rc2 内没有此修复，所以 rc2 → rc3 的实机验收需要临时绕过该节点，或等它恢复。重试路径的实机验证要等包含此修复的版本发布后，由该版本更新到下一个版本时完成。
+
+## 2026-11-09 软件更新实机验收（Issue #71）
+
+本机 macOS 27.2／arm64，系统 HTTP/HTTPS 代理开启，App 位于 `/Applications/Nebula.app`。
+
+发布：
+- `v0.1.0-rc2`（build 7，`148e902`）、`v0.1.0-rc3`（build 8，`8d8bd4f`）、`v0.1.0-rc4`（build 9，`b22aa6f`，含 #75）都公开为非 Latest 的 Prerelease。
+- 每个版本都包含 DMG、ZIP、`.zip.sig`、build-info.json、SHA256SUMS。
+- 本地核对：SHA256SUMS 正确；用仓库公钥按 App 同样的 CryptoKit 方式验签通过；解压后 bundle ID、`NebulaReleaseVersion`、build 号、内置公钥与 `codesign --deep --strict` 正确；arm64 与 x86_64 齐全；`sourceDirty` 为 false。
+- 匿名 Releases API 可以列出这三个版本及其 `.zip.sig`。
+- rc4 的 tag 工作流第一次运行时，已有测试 `ProtocolTests.testUnresponsiveChildDoesNotLoseForcedCleanupWarning` 偶发失败（期望 `cleanup_incomplete`，得到 `backend_stopped`）。本机单独运行 6 次都通过；重跑失败的 job 后通过，同一提交生成草稿。
+
+rc2 → rc3：
+- rc2 检查到了 rc3，但下载失败，原 App 未受影响。原因见上一节 #74：代理出口所在的 GitHub 边缘节点对 rc3 `.zip.sig` 返回 504。
+- 之后用户从 DMG 手动安装了 rc3。依据：App 带有 Chrome 隔离标记，且下载文件夹里有 rc3 DMG。这次手动安装不计为 App 内更新验收。
+
+rc3 → rc4（App 内更新，通过）：
+- rc3 的更新代码与 rc2 相同。
+- 用户在「软件更新」中检查到 rc4，点击「下载并安装」，App 自动退出并重新打开，界面显示 `0.1.0-rc4`。
+- 本机核对：
+  - 新进程由 launchd 拉起，父进程 PID 为 1，后台随新 App 正常运行，未提示“升级后台”（helper 发布号仍为 0.4.1）。
+  - App 上没有 Chrome 隔离标记，目录属组为当前用户的 `staff`，下载文件夹里没有 rc4 安装包，可以确认是 App 内替换。
+  - 安装后的每个文件与已签名的 rc4 ZIP 逐一比对 SHA256，全部一致；`codesign --deep --strict` 通过。
+  - `/Applications` 下没有 `.Nebula-update-*` 备份残留，同卷临时目录已清理。
+
+未完成：
+- #75 的 API 地址重试路径只经过单元测试与 URLSession 实测；还没有在“发布页地址失败、App 自动改用 API 地址”的真实更新中触发。
+- 未在 Intel、macOS 13 或干净机器上验证。
