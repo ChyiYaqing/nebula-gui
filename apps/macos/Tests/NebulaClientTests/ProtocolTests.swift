@@ -70,14 +70,21 @@ final class ProtocolTests: XCTestCase {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
         let helper = directory.appendingPathComponent("unresponsive-helper")
-        let script = """
+        // Answers one request only after ignoring TERM, then never again. Without this
+        // handshake a slow start let the timeout's TERM end the script before the trap (#79).
+        let script = #"""
         #!/bin/sh
         trap '' TERM
+        IFS= read -r line
+        request_id=$(printf '%s' "$line" | /usr/bin/sed -E 's/.*"id":"([^"]+)".*/\1/')
+        printf '{"version":1,"id":"%s","result":[]}\n' "$request_id"
         while IFS= read -r line; do :; done
-        """
+        """#
         try Data(script.utf8).write(to: helper)
         try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: helper.path)
-        let client = BackendClient(executable: helper, store: directory.appendingPathComponent("store"), requestTimeout: 1)
+        // The timeout also bounds the handshake, so it leaves room for a slow start.
+        let client = BackendClient(executable: helper, store: directory.appendingPathComponent("store"), requestTimeout: 3)
+        _ = try await client.send(BackendRequest(method: "list"), as: [NetworkProfile].self)
         for attempt in 0..<2 {
             do {
                 _ = try await client.send(BackendRequest(method: "status"), as: ConnectionStatus.self)
