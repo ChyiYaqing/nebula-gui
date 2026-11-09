@@ -20,7 +20,8 @@ struct GitHubSoftwareUpdater: SoftwareUpdating {
     let bundle: URL
     let info: [String: Any]
     private let session: URLSession
-    static let defaultSession: URLSession = {
+    /// URLSession is Sendable; nonisolated so it can be a default argument.
+    nonisolated static let defaultSession: URLSession = {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = 30
         configuration.timeoutIntervalForResource = 600
