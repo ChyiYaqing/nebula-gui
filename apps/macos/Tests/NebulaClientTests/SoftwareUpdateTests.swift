@@ -53,6 +53,31 @@ final class SoftwareUpdateTests: XCTestCase {
         XCTAssertEqual(oversized?.installable, false)
     }
 
+    func testCatalogKeepsOnlyThisRepositorysAPIAssetAddresses() throws {
+        func offer(_ api: (String) -> String) throws -> AvailableUpdate? {
+            var entry = release("v0.2.0")
+            entry["assets"] = (entry["assets"] as! [[String: Any]]).map { var asset = $0; asset["url"] = api($0["name"] as! String); return asset }
+            return UpdateCatalog.newest(in: try decode([entry]), current: version("0.1.0"))
+        }
+        let base = "https://api.github.com/repos/ChyiYaqing/nebula-gui/releases/assets/"
+        let trusted = try offer { $0.hasSuffix(".sig") ? base + "2" : base + "1" }
+        XCTAssertEqual(trusted?.archiveAPI?.absoluteString, base + "1")
+        XCTAssertEqual(trusted?.signatureAPI?.absoluteString, base + "2")
+        XCTAssertNil(try offer { _ in base }.flatMap(\.archiveAPI))
+        for untrusted in ["http://api.github.com/repos/ChyiYaqing/nebula-gui/releases/assets/1",
+                          "https://api.github.com/repos/someone/nebula-gui/releases/assets/1",
+                          "https://example.com/repos/ChyiYaqing/nebula-gui/releases/assets/1",
+                          base + "1/../../../../other", base + "1?redirect=x"] {
+            let update = try offer { _ in untrusted }
+            XCTAssertEqual(update?.installable, true, "the github.com download is unaffected")
+            XCTAssertNil(update?.archiveAPI, untrusted)
+            XCTAssertNil(update?.signatureAPI, untrusted)
+        }
+        let withoutAPI = UpdateCatalog.newest(in: try decode([release("v0.2.0")]), current: version("0.1.0"))
+        XCTAssertEqual(withoutAPI?.installable, true, "assets without an API address still decode")
+        XCTAssertNil(withoutAPI?.archiveAPI)
+    }
+
     func testSignatureMustMatchTheEmbeddedKey() throws {
         let key = Curve25519.Signing.PrivateKey()
         let publicKey = key.publicKey.rawRepresentation.base64EncodedString()

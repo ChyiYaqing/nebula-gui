@@ -131,3 +131,71 @@ extension AppModelTests {
         XCTAssertEqual(model.updateState, .failed("请等待当前操作完成后再安装更新。", update()))
     }
 }
+
+/// Serves fixed responses by URL and records each request with its Accept header (#74).
+final class StubDownloads: URLProtocol {
+    nonisolated(unsafe) static var responses: [String: (Int, Data)] = [:]
+    nonisolated(unsafe) static var requests: [String] = []
+    static func session() -> URLSession {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [StubDownloads.self]
+        return URLSession(configuration: configuration)
+    }
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func startLoading() {
+        let url = request.url!.absoluteString
+        Self.requests.append(url + " " + (request.value(forHTTPHeaderField: "Accept") ?? "-"))
+        guard let (status, body) = Self.responses[url] else { client?.urlProtocol(self, didFailWithError: URLError(.cannotConnectToHost)); return }
+        client?.urlProtocol(self, didReceive: HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: nil)!, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: body)
+        client?.urlProtocolDidFinishLoading(self)
+    }
+    override func stopLoading() {}
+}
+
+final class UpdateDownloadTests: XCTestCase {
+    private let page = URL(string: "https://github.com/ChyiYaqing/nebula-gui/releases/download/v0.1.0-rc3/Nebula-v0.1.0-rc3-macos-universal.zip.sig")!
+    private let api = URL(string: "https://api.github.com/repos/ChyiYaqing/nebula-gui/releases/assets/726273122")!
+    override func setUp() { StubDownloads.responses = [:]; StubDownloads.requests = [] }
+
+    @MainActor private func download(fallback: URL?, limit: Int = 1024) async throws -> Data {
+        try await GitHubSoftwareUpdater(session: StubDownloads.session()).download(page, fallback: fallback, limit: limit)
+    }
+
+    @MainActor func testFailedDownloadRetriesOnceThroughTheAPI() async throws {
+        StubDownloads.responses = [page.absoluteString: (504, Data("gateway".utf8)), api.absoluteString: (200, Data("signature".utf8))]
+        let data = try await download(fallback: api)
+        XCTAssertEqual(String(decoding: data, as: UTF8.self), "signature")
+        XCTAssertEqual(StubDownloads.requests, [page.absoluteString + " -", api.absoluteString + " application/octet-stream"])
+    }
+
+    @MainActor func testDownloadUsesThePageAddressWhenItWorks() async throws {
+        StubDownloads.responses = [page.absoluteString: (200, Data("signature".utf8))]
+        _ = try await download(fallback: api)
+        XCTAssertEqual(StubDownloads.requests, [page.absoluteString + " -"])
+    }
+
+    @MainActor func testFailedDownloadsReportADownloadProblem() async throws {
+        StubDownloads.responses = [page.absoluteString: (504, Data()), api.absoluteString: (502, Data())]
+        do { _ = try await download(fallback: api); XCTFail("both addresses failed") }
+        catch let problem as BackendProblem {
+            XCTAssertEqual(problem.code, "update_download_failed")
+            XCTAssertEqual(problem.message, "下载更新包失败（HTTP 502），请稍后重试，或从发布页手动下载。")
+        }
+        StubDownloads.requests = []
+        do { _ = try await download(fallback: nil); XCTFail("no fallback") }
+        catch let problem as BackendProblem { XCTAssertEqual(problem.message, "下载更新包失败（HTTP 504），请稍后重试，或从发布页手动下载。") }
+        XCTAssertEqual(StubDownloads.requests.count, 1)
+        StubDownloads.responses = [:]
+        do { _ = try await download(fallback: nil); XCTFail("offline") }
+        catch let problem as BackendProblem { XCTAssertEqual(problem.code, "update_download_failed"); XCTAssertTrue(problem.message.hasPrefix("下载更新包时无法连接 GitHub")) }
+    }
+
+    @MainActor func testOversizedDownloadIsNotRetried() async throws {
+        StubDownloads.responses = [page.absoluteString: (200, Data(count: 2048)), api.absoluteString: (200, Data("small".utf8))]
+        do { _ = try await download(fallback: api); XCTFail("over the limit") }
+        catch let problem as BackendProblem { XCTAssertEqual(problem.code, "update_package_invalid") }
+        XCTAssertEqual(StubDownloads.requests.count, 1)
+    }
+}
