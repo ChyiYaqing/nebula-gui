@@ -105,6 +105,9 @@ extension BackendClient: AppBackend {}
     var active: NetworkProfile? { profiles.first { $0.id == status.profileID } }
     var isCurrentStarted: Bool { status.isStarted && status.profileID == selectedID }
     /// Status item state (#65): busy or recovering first, then connected, then anything needing attention.
+    /// The backend could not open the private store (#84): the connection state is unknown, not failed.
+    static let storeCodes: Set<String> = ["store_in_use", "store_unavailable"]
+    var storeUnavailable: Bool { problem.map { Self.storeCodes.contains($0.code) } ?? false }
     var menuIconState: MenuIconState {
         if connectionBusy || (recoveryProfileID != nil && !recoveryText.isEmpty) { return .connecting }
         if status.isStarted { return .connected }
@@ -233,13 +236,15 @@ extension BackendClient: AppBackend {}
             }
             if snapshot.isStarted, let code = problem?.code, transientCodes.contains(code) { problem = nil }
             // The private store opened once the other Nebula quit or its permissions were fixed (#84).
-            if let code = problem?.code, ["store_in_use", "store_unavailable"].contains(code) {
+            if storeUnavailable {
                 problem = nil
                 if !profilesLoaded { Task { await self.refresh() } }
             }
         } catch {
             guard generation == recovery.generation, !shuttingDown else { return }
             setProblem(error)
+            // Without its store the backend reports nothing about the connection (#86).
+            if storeUnavailable { return }
             status = ConnectionStatus(state: "failed", profileID: status.profileID, error: problem, peers: [], startedAt: status.startedAt)
         }
     }
