@@ -5,6 +5,9 @@ import NebulaClient
 struct MenuContent: View {
     @ObservedObject var model: AppModel
     @Environment(\.openWindow) private var openWindow
+    /// Closes the MenuBarExtra panel through SwiftUI. Closing its window directly left
+    /// SwiftUI believing the panel was open, so the status item stopped toggling it (#82).
+    @Environment(\.dismiss) private var dismiss
     private var profile: NebulaClient.NetworkProfile? { model.menuProfile }
     private var presentation: ConnectionPresentation { ConnectionPresentation(model: model, profileID: profile?.id) }
     /// Latency rows are limited so the panel stays short; the nodes page lists the rest.
@@ -46,7 +49,6 @@ struct MenuContent: View {
         footer
         }
         .frame(width: 340).background(Palette.canvas).tint(Palette.accent)
-        .background(MenuPanelDismissal())
         .onAppear { model.showMenu(true) }
         .onDisappear { model.showMenu(false) }
     }
@@ -178,7 +180,9 @@ struct MenuContent: View {
         .overlay(alignment: .top) { Divider() }
     }
 
-    private func showWindow() { openWindow(id: "main"); NSApp.activate(ignoringOtherApps: true) }
+    /// Clicks outside the panel (other apps, their status items, the desktop, Nebula's
+    /// own windows) already close it natively; actions that open the main window close it first.
+    private func showWindow() { dismiss(); openWindow(id: "main"); NSApp.activate(ignoringOtherApps: true) }
     private func menuRow(_ title: String, symbol: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Label(title, systemImage: symbol).font(.system(size: 13))
@@ -206,75 +210,5 @@ private struct FooterButton<Content: View>: View {
         .onHover { hovering = $0 }
         .help(help)
         .accessibilityLabel(accessibility)
-    }
-}
-
-/// Closes the menu bar panel when the user clicks elsewhere, like a system menu (#65):
-/// a click in another app or on the desktop, or another Nebula window becoming key
-/// (e.g. after "打开 Nebula" or "设置"). Clicks on the status item itself are left to
-/// MenuBarExtra so the panel toggles instead of closing and reopening. Observers exist
-/// only while the panel is on screen. Watching mouse clicks needs no Accessibility access.
-private struct MenuPanelDismissal: NSViewRepresentable {
-    func makeNSView(context: Context) -> NSView { Watcher() }
-    func updateNSView(_ view: NSView, context: Context) {}
-
-    final class Watcher: NSView {
-        private var mouseMonitor: Any?
-        private var keyObserver: NSObjectProtocol?
-        private var resignObserver: NSObjectProtocol?
-        private var panelObservers: [NSObjectProtocol] = []
-        override func viewDidMoveToWindow() {
-            super.viewDidMoveToWindow()
-            stopWatching()
-            panelObservers.forEach(NotificationCenter.default.removeObserver)
-            panelObservers = []
-            guard let panel = window else { return }
-            // SwiftUI may reuse the panel window. A panel opened from the menu bar does not
-            // always become key (e.g. while Nebula is inactive), so watching follows whether it
-            // is actually on screen, not key status.
-            panelObservers = [
-                NotificationCenter.default.addObserver(forName: NSWindow.didChangeOcclusionStateNotification, object: panel, queue: .main) { [weak self] _ in
-                    Task { @MainActor in self?.syncWithVisibility() }
-                },
-                NotificationCenter.default.addObserver(forName: NSWindow.didBecomeKeyNotification, object: panel, queue: .main) { [weak self] _ in
-                    Task { @MainActor in self?.syncWithVisibility() }
-                },
-                NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: panel, queue: .main) { [weak self] _ in
-                    Task { @MainActor in self?.stopWatching() }
-                },
-            ]
-            syncWithVisibility()
-        }
-        private func syncWithVisibility() {
-            guard let panel = window else { return stopWatching() }
-            if panel.isVisible && panel.occlusionState.contains(.visible) { startWatching() } else { stopWatching() }
-        }
-        private func startWatching() {
-            guard mouseMonitor == nil, window != nil else { return }
-            mouseMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]) { [weak self] _ in
-                Task { @MainActor in self?.closePanel() }
-            }
-            keyObserver = NotificationCenter.default.addObserver(forName: NSWindow.didBecomeKeyNotification, object: nil, queue: .main) { [weak self] note in
-                let other = note.object as? NSWindow
-                Task { @MainActor in
-                    guard let self, let other, other !== self.window, other.level == .normal else { return }
-                    self.closePanel()
-                }
-            }
-            // Another app becoming active (its window or its own menu bar item was clicked).
-            resignObserver = NotificationCenter.default.addObserver(forName: NSApplication.didResignActiveNotification, object: nil, queue: .main) { [weak self] _ in
-                Task { @MainActor in self?.closePanel() }
-            }
-        }
-        private func closePanel() {
-            stopWatching()
-            window?.close()
-        }
-        private func stopWatching() {
-            if let mouseMonitor { NSEvent.removeMonitor(mouseMonitor) }
-            if let keyObserver { NotificationCenter.default.removeObserver(keyObserver) }
-            if let resignObserver { NotificationCenter.default.removeObserver(resignObserver) }
-            mouseMonitor = nil; keyObserver = nil; resignObserver = nil
-        }
     }
 }
