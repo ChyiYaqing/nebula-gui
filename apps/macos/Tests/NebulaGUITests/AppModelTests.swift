@@ -110,6 +110,10 @@ import NebulaClient
         await poll.value
         XCTAssertEqual(model.problem?.code, "store_in_use", "still in use")
         XCTAssertNotEqual(model.problem?.code, "cleanup_incomplete")
+        // #86: the connection state is unknown, not failed.
+        XCTAssertNotEqual(model.status.state, "failed")
+        XCTAssertEqual(ConnectionPresentation(model: model, profileID: nil).title, "无法读取状态")
+        XCTAssertEqual(model.menuIconState, .attention)
 
         polling = backend.expect("status")
         poll = Task { await model.refreshStatus() }
@@ -132,6 +136,7 @@ import NebulaClient
         for _ in 0..<50 where model.profiles.isEmpty { try await Task.sleep(nanoseconds: 10_000_000) }
         XCTAssertEqual(model.profiles.map(\.id), ["first"])
         XCTAssertNil(model.problem)
+        XCTAssertEqual(ConnectionPresentation(model: model, profileID: "first").title, "未连接")
     }
 
     func testIsolatedInitializationDoesNotLaunchTransportOrServices() throws {

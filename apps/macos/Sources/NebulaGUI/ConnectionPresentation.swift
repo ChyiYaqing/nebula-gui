@@ -30,6 +30,9 @@ struct ConnectionPresentation {
         func name(_ id: String) -> String { model.profiles.first { $0.id == id }?.name ?? "其他网络" }
         if model.connectionBusy {
             title = "正在处理连接"; detail = "正在与连接后台同步，请稍候。"; symbol = "arrow.triangle.2.circlepath"; tone = .neutral
+        } else if model.storeUnavailable {
+            // Unknown rather than failed: another Nebula may hold the store and a connection (#86).
+            title = "无法读取状态"; detail = "数据目录暂不可用，原因见下方；可用后自动刷新。"; symbol = "exclamationmark.circle"; tone = .attention
         } else if model.status.isStarted && model.status.profileID == profileID {
             title = "隧道已启动"; detail = "节点是否可达以实际访问为准；节点页显示 ICMP 延迟。"; symbol = "checkmark.circle.fill"; tone = .connected
         } else if model.status.isStarted {
