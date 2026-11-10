@@ -19,6 +19,12 @@ import (
 
 var safeID = regexp.MustCompile(`^[a-f0-9]{32}$`)
 
+// Store open failures the backend reports to the GUI as structured problems (#84).
+var (
+	ErrStoreInUse      = errors.New("another backend owns this store")
+	ErrStoreNotPrivate = errors.New("store requires a private 0700 directory")
+)
+
 type pointer struct {
 	Version     string `json:"version"`
 	Previous    string `json:"previous,omitempty"`
@@ -45,7 +51,7 @@ func NewStore(root string) (*Store, error) {
 	}
 	st, err := os.Lstat(root)
 	if err != nil || !st.IsDir() || st.Mode().Perm()&0077 != 0 {
-		return nil, errors.New("store requires a private 0700 directory")
+		return nil, ErrStoreNotPrivate
 	}
 	// Resolve parent aliases such as macOS /var -> /private/var, but never
 	// follow a symlink used as the managed directory itself (checked above).
@@ -64,7 +70,7 @@ func NewStore(root string) (*Store, error) {
 	lock := os.NewFile(uintptr(fd), "store lock")
 	if err = unix.Flock(fd, unix.LOCK_EX|unix.LOCK_NB); err != nil {
 		lock.Close()
-		return nil, errors.New("another backend owns this store")
+		return nil, ErrStoreInUse
 	}
 	if err = os.MkdirAll(filepath.Join(root, "profiles"), 0700); err != nil {
 		lock.Close()

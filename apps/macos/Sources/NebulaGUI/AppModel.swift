@@ -232,6 +232,11 @@ extension BackendClient: AppBackend {}
                 if currentEvents != events { events = currentEvents }
             }
             if snapshot.isStarted, let code = problem?.code, transientCodes.contains(code) { problem = nil }
+            // The private store opened once the other Nebula quit or its permissions were fixed (#84).
+            if let code = problem?.code, ["store_in_use", "store_unavailable"].contains(code) {
+                problem = nil
+                if !profilesLoaded { Task { await self.refresh() } }
+            }
         } catch {
             guard generation == recovery.generation, !shuttingDown else { return }
             setProblem(error)

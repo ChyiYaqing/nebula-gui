@@ -90,6 +90,50 @@ import NebulaClient
     func started(_ id: String = "first") -> ConnectionStatus {
         ConnectionStatus(state: "started", profileID: id, error: nil, peers: [])
     }
+    /// #84: while another Nebula holds the store, the problem says so; the next successful
+    /// poll clears it and loads the networks that could not be listed at launch.
+    func testStoreInUseClearsAndLoadsNetworksOnceTheStoreOpens() async throws {
+        let backend = controlledBackend()
+        let model = AppModel(client: backend)
+        let listing = backend.expect("list")
+        let launch = Task { await model.refresh() }
+        await fulfillment(of: [listing], timeout: 2)
+        backend.fail("list", code: "store_in_use")
+        await launch.value
+        XCTAssertEqual(model.problem?.code, "store_in_use")
+        XCTAssertTrue(model.profiles.isEmpty)
+
+        var polling = backend.expect("status")
+        var poll = Task { await model.refreshStatus() }
+        await fulfillment(of: [polling], timeout: 2)
+        backend.fail("status", code: "store_in_use")
+        await poll.value
+        XCTAssertEqual(model.problem?.code, "store_in_use", "still in use")
+        XCTAssertNotEqual(model.problem?.code, "cleanup_incomplete")
+
+        polling = backend.expect("status")
+        poll = Task { await model.refreshStatus() }
+        await fulfillment(of: [polling], timeout: 2)
+        let checking = backend.expect("authorization")
+        try backend.reply("status", ConnectionStatus.disconnected)
+        await fulfillment(of: [checking], timeout: 2)
+        let reloading = backend.expect("list")
+        try backend.replyJSON("authorization", data: Data(#"{"available":true}"#.utf8))
+        await poll.value
+        XCTAssertNil(model.problem)
+        await fulfillment(of: [reloading], timeout: 2)
+        let querying = backend.expect("status")
+        try backend.reply("list", [try profile("first")])
+        await fulfillment(of: [querying], timeout: 2)
+        let authorizing = backend.expect("authorization")
+        try backend.reply("status", ConnectionStatus.disconnected)
+        await fulfillment(of: [authorizing], timeout: 2)
+        try backend.replyJSON("authorization", data: Data(#"{"available":true}"#.utf8))
+        for _ in 0..<50 where model.profiles.isEmpty { try await Task.sleep(nanoseconds: 10_000_000) }
+        XCTAssertEqual(model.profiles.map(\.id), ["first"])
+        XCTAssertNil(model.problem)
+    }
+
     func testIsolatedInitializationDoesNotLaunchTransportOrServices() throws {
         let backend = controlledBackend(); let model = try model(backend)
         XCTAssertTrue(backend.calls.isEmpty)
