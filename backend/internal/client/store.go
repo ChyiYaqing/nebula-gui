@@ -175,31 +175,40 @@ func (s *Store) List() ([]Profile, error) {
 	sort.Slice(profiles, func(i, j int) bool { return profiles[i].ImportedAt.Before(profiles[j].ImportedAt) })
 	return profiles, nil
 }
+
+var syncDir = syncDirectory
+
 func atomicJSON(path string, v any) error {
+	_, err := atomicJSONPublished(path, v)
+	return err
+}
+
+// atomicJSONPublished reports whether rename succeeded, even if syncing fails.
+func atomicJSONPublished(path string, v any) (bool, error) {
 	b, e := json.Marshal(v)
 	if e != nil {
-		return e
+		return false, e
 	}
 	f, e := os.CreateTemp(filepath.Dir(path), ".write-")
 	if e != nil {
-		return e
+		return false, e
 	}
 	defer os.Remove(f.Name())
 	if _, e = f.Write(b); e != nil {
 		f.Close()
-		return e
+		return false, e
 	}
 	if e = f.Sync(); e != nil {
 		f.Close()
-		return e
+		return false, e
 	}
 	if e = f.Close(); e != nil {
-		return e
+		return false, e
 	}
 	if e = os.Rename(f.Name(), path); e != nil {
-		return e
+		return false, e
 	}
-	return syncDirectory(filepath.Dir(path))
+	return true, syncDir(filepath.Dir(path))
 }
 
 // syncDirectory makes new entries and renames in dir durable before a later step
@@ -274,13 +283,13 @@ func (s *Store) Save(c *Candidate, replace string) (Profile, error) {
 		return Profile{}, err
 	}
 	// The version directory must be durable before the index can point at it.
-	if err := syncDirectory(base); err != nil {
+	if err := syncDir(base); err != nil {
 		return Profile{}, err
 	}
-	if err := atomicJSON(filepath.Join(s.root, "profiles", p.ID+".json"), pointer{Version: p.Version, Previous: previous, DisplayName: p.Name}); err != nil {
+	committed, err = atomicJSONPublished(filepath.Join(s.root, "profiles", p.ID+".json"), pointer{Version: p.Version, Previous: previous, DisplayName: p.Name})
+	if err != nil {
 		return Profile{}, err
 	}
-	committed = true
 	return p, nil
 }
 func sameNetworks(a, b []string) bool {
