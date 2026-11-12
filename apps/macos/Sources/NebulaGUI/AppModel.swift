@@ -617,14 +617,14 @@ extension AppModel {
             do { try await self.wait(1.5) } catch { return }
             guard !Task.isCancelled, !self.shuttingDown, !self.busy else { return }
             await self.refreshStatus()
-            guard self.status.isStarted, self.authorization.supportsRecovery, !self.busy, !self.shuttingDown else { return }
+            guard !Task.isCancelled, self.status.isStarted, self.authorization.supportsRecovery, !self.busy, !self.shuttingDown else { return }
             let generation = self.recovery.generation
             do {
                 let snapshot = try await self.client.send(BackendRequest(method: "rebind"), as: ConnectionStatus.self)
-                guard generation == self.recovery.generation, !self.shuttingDown else { return }
+                guard !Task.isCancelled, generation == self.recovery.generation, !self.shuttingDown else { return }
                 self.status = snapshot
             } catch {
-                guard generation == self.recovery.generation, !self.shuttingDown else { return }
+                guard !Task.isCancelled, generation == self.recovery.generation, !self.shuttingDown else { return }
                 self.setProblem(error); await self.refreshStatus()
             }
         }
