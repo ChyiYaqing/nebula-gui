@@ -649,3 +649,12 @@ rc5 → rc6（App 内更新，通过）：
 
 - `NEBULA_GUI_APP_OUTPUT="$PWD/build/Review/Nebula.app" bash scripts/test.sh` 通过：Go race、107 项 Swift 测试（GUI 51／Client 56）、四项退出流程检查；`git diff --check` 通过。
 - 隔离预览 760×570 浅色概览：新文案单行完整显示，无截断。截图仅含合成数据，保存在忽略目录 `build/Review/copy/`。未做实机验收（纯文案变更，不涉及交互或后台）。
+
+## 2026-11-12 保存配置：索引已发布但目录同步失败时保留新版本（Issue #94）
+
+来源于当日对后台 Go 代码的只读审计。`Store.Save` 在索引 rename 成功、随后的目录同步失败时，会以失败返回并删除新版本目录，正式索引却已指向它，之后该配置无法加载。现在只有索引尚未发布时才清理新版本；已发布但同步失败时保留新版本并照旧返回错误，调用方因此不会继续清理旧版本。实现由 codex 按 Issue 范围完成，代理审查 diff 后提交；只改 `store.go` 与测试，不涉及协议、helper 或 GUI，`HelperRelease` 不变。
+
+- 新增三个回归场景（注入目录同步失败，凭据为测试内临时生成）：新建与替换配置时，发布后同步失败返回错误但 `Load`／`List` 读到新版本；发布前同步失败时新版本目录被清理、旧配置仍可加载。
+- 变异检查：让 `Save` 忽略“已发布”结果后，这些测试失败；恢复后通过。
+- `NEBULA_GUI_APP_OUTPUT="$PWD/build/Review/Nebula.app" bash scripts/test.sh` 通过（Go race、107 项 Swift 测试、四项退出流程检查）；`go vet ./...`、`gofmt -l`、`git diff --check` 通过。
+- 未验证：真实磁盘故障或断电后的持久性，测试只覆盖注入错误后的行为。未做实机验收，未替换已安装 App 或后台组件。
