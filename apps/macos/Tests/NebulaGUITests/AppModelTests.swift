@@ -294,6 +294,18 @@ extension AppModelTests {
         XCTAssertTrue(backend.calls.isEmpty)
         _ = await model.shutdown()
     }
+    /// #97: a finished removal left the review in removal mode for the next "enable".
+    func testConnectAfterRemovalOpensReviewInInstallMode() async throws {
+        let backend = controlledBackend(); let model = try model(backend)
+        model.authorization = .missing
+        model.removingAuthorization = true; model.upgradingAuthorization = true
+        await model.connectSelected()
+        XCTAssertTrue(model.showAuthorizationReview)
+        XCTAssertFalse(model.removingAuthorization)
+        XCTAssertFalse(model.upgradingAuthorization)
+        XCTAssertTrue(backend.calls.isEmpty)
+        _ = await model.shutdown()
+    }
     func testFailedPrimaryDisconnectRetainsCleanupUncertainty() async throws {
         let backend = controlledBackend(); let model = try model(backend)
         model.status = started(); model.authorization = .missing; model.automaticRecovery = false

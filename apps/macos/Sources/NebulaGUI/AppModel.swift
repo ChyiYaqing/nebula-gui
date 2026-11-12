@@ -398,7 +398,7 @@ extension BackendClient: AppBackend {}
     func connectSelected() async {
         guard !busy, !shuttingDown else { return }
         if isCurrentStarted { await disconnect(); return }
-        if !authorization.available { upgradingAuthorization = false; showAuthorizationReview = true; return }
+        if !authorization.available { upgradingAuthorization = false; removingAuthorization = false; showAuthorizationReview = true; return }
         guard let selected else { return }
         recoveryTask?.cancel(); recoveryTask = nil
         let generation = recovery.userConnect(selected.id)
