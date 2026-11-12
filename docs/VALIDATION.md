@@ -658,3 +658,11 @@ rc5 → rc6（App 内更新，通过）：
 - 变异检查：让 `Save` 忽略“已发布”结果后，这些测试失败；恢复后通过。
 - `NEBULA_GUI_APP_OUTPUT="$PWD/build/Review/Nebula.app" bash scripts/test.sh` 通过（Go race、107 项 Swift 测试、四项退出流程检查）；`go vet ./...`、`gofmt -l`、`git diff --check` 通过。
 - 未验证：真实磁盘故障或断电后的持久性，测试只覆盖注入错误后的行为。未做实机验收，未替换已安装 App 或后台组件。
+
+## 2026-11-12 授权审阅模式复位与导入保存中的取消（Issue #97）
+
+来源于当日对 Swift GUI 的只读审计，已对照代码确认。完成后台移除后 `removingAuthorization` 保持为 true，再从连接入口打开授权审阅仍是移除模式；现在连接入口同时复位移除与升级模式。导入确认窗口在保存请求进行中仍可点“取消”，但只关闭窗口而不取消保存；现在保存进行中禁用“取消”，与已有的禁止手势关闭一致。
+
+- 新增回归测试 `testConnectAfterRemovalOpensReviewInInstallMode`：移除模式残留且后台不可用时连接，审阅窗口打开、两种模式均复位、不发送后台请求。
+- `NEBULA_GUI_APP_OUTPUT="$PWD/build/Review/Nebula.app" bash scripts/test.sh` 通过（Go race、108 项 Swift 测试：GUI 52／Client 56、四项退出流程检查）；`git diff --check` 通过。
+- 未验证：“取消”在保存中变灰只通过代码审查与构建确认，没有自动化或实机交互检查；真实的“移除后台 → 再启用”流程需要管理员授权和系统组件变更，本次未执行。

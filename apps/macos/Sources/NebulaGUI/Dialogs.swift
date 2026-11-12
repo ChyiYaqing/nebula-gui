@@ -39,6 +39,7 @@ struct ImportView: View {
             }
             HStack {
                 Button("取消") { model.importing = false; model.candidate = nil; model.problem = nil }.keyboardShortcut(.cancelAction)
+                    .disabled(model.busy)
                 Spacer()
                 Button(model.replacementID == nil ? "保存网络" : "确认更新") { Task { await model.confirmImport() } }
                     .buttonStyle(.borderedProminent).disabled(model.busy || model.candidate == nil || ProfileNameRules.validationMessage(model.importName) != nil)
