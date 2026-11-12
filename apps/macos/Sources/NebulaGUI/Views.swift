@@ -97,9 +97,8 @@ struct MainView: View {
                 NebulaMark().fill(Palette.accent).frame(width: 28, height: 28)
                 Text("Nebula").font(.system(size: 18, weight: .semibold))
             }.padding(.top, 8).accessibilityElement(children: .combine)
-            if model.selected != nil { navigation }
-            Divider()
-            Text("我的网络").font(.caption.weight(.medium)).foregroundStyle(.secondary)
+            if model.selected != nil { navigation; Divider() }
+            Text("我的网络").font(.caption.weight(.medium)).foregroundStyle(.secondary).padding(.bottom, -8)
             ScrollView {
                 VStack(spacing: 6) {
                     ForEach(model.profiles) { profile in
@@ -164,7 +163,7 @@ struct MainView: View {
         }.padding(.horizontal, 24).padding(.top, 16).padding(.bottom, 12)
     }
     private var navigation: some View {
-        VStack(spacing: 6) {
+        VStack(spacing: 2) {
             ForEach(WorkspacePage.allCases) { item in
                 Button { page = item } label: {
                     HStack(spacing: 12) {
