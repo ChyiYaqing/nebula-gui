@@ -680,3 +680,11 @@ rc5 → rc6（App 内更新，通过）：
 - 新增 5 项回归测试（测试替身与临时目录，不访问网络或 `/Applications`）。`NEBULA_GUI_APP_OUTPUT="$PWD/build/Review/Nebula.app" bash scripts/test.sh` 通过：Go race、113 项 Swift 测试（GUI 56／Client 57）、四项退出流程检查。预览构建与隔离检查、`git diff --check` 通过。
 - codex 在其沙箱内运行时 `testAppleScriptReturnsStructuredFailureWithoutRawOutput` 失败（`osascript -2740`）；同一提交在本机与 CI 通过，判断为沙箱环境限制，未进一步调查。
 - 未验证：正常更新路径的实机下载、替换与重启没有复验，留待下一个候选版本发布时进行；本次未发布版本、未替换已安装 App。
+
+## 2026-11-12 已取消的网络变化任务不再发送 rebind（Issue #101）
+
+来源于当日对 Swift GUI 的只读审计，已对照代码确认。网络变化任务在状态查询返回后没有检查自己是否已被取消，状态查询在途时发生睡眠、断网或新一轮网络变化，旧任务仍会发送一次 `rebind`。现在查询返回后、以及 `rebind` 返回后发布结果前都检查取消。实现由 codex 完成，代理审查 diff 后提交。
+
+- 新增两项回归测试（注入时钟与受控后台，不依赖真实等待）：状态查询在途时进入睡眠，查询返回后没有 `rebind`；未取消时发送 `rebind` 并发布其返回的状态。前者在修复前失败（Unexpected request: rebind）。
+- `NEBULA_GUI_APP_OUTPUT="$PWD/build/Review/Nebula.app" bash scripts/test.sh` 通过：Go race、115 项 Swift 测试（GUI 58／Client 57）、四项退出流程检查；`git diff --check` 通过。
+- 未验证：真实睡眠与网络切换下的行为没有实机验收（A03–A07 仍按用户安排延后）。

@@ -233,6 +233,59 @@ import NebulaClient
         XCTAssertEqual(backend.calls.map(\.method), ["connect", "disconnect"])
         XCTAssertFalse(model.canCancelConnection)
     }
+    /// Await the private task so absence checks need neither sleeps nor scheduler guesses.
+    private func networkTask(of model: AppModel) throws -> Task<Void, Never> {
+        try XCTUnwrap(Mirror(reflecting: model).children.first { $0.label == "networkTask" }?.value as? Task<Void, Never>)
+    }
+    func testNetworkChangeCancelledDuringStatusQueryDoesNotRebind() async throws {
+        let backend = controlledBackend(), clock = RecoveryClock()
+        let model = AppModel(client: backend, now: { clock.date }, wait: { try await clock.wait($0) })
+        model.status = started()
+        model.environmentChanged(.network(true))
+        let task = try networkTask(of: model)
+        await fulfillment(of: [clock.requested], timeout: 2)
+        let querying = backend.expect("status")
+        clock.advance()
+        await fulfillment(of: [querying], timeout: 2)
+
+        model.environmentChanged(.sleep)
+        XCTAssertTrue(task.isCancelled)
+        let authorizing = backend.expect("authorization")
+        try backend.reply("status", started())
+        await fulfillment(of: [authorizing], timeout: 2)
+        try backend.replyJSON("authorization", data: Data(#"{"available":true,"updateRequired":false}"#.utf8))
+        await task.value
+
+        XCTAssertEqual(backend.calls.map(\.method), ["status", "authorization"])
+        XCTAssertNil(model.problem)
+        _ = await model.shutdown()
+    }
+    func testNetworkChangeRebindsAndPublishesReturnedStatus() async throws {
+        let backend = controlledBackend(), clock = RecoveryClock()
+        let model = AppModel(client: backend, now: { clock.date }, wait: { try await clock.wait($0) })
+        model.status = started()
+        model.environmentChanged(.network(true))
+        let task = try networkTask(of: model)
+        await fulfillment(of: [clock.requested], timeout: 2)
+        let querying = backend.expect("status")
+        clock.advance()
+        await fulfillment(of: [querying], timeout: 2)
+        let authorizing = backend.expect("authorization")
+        try backend.reply("status", started())
+        await fulfillment(of: [authorizing], timeout: 2)
+        let rebinding = backend.expect("rebind")
+        try backend.replyJSON("authorization", data: Data(#"{"available":true,"updateRequired":false}"#.utf8))
+        await fulfillment(of: [rebinding], timeout: 2)
+        var rebound = started()
+        rebound.observedAt = "2026-11-12T00:00:00Z"
+        try backend.reply("rebind", rebound)
+        await task.value
+
+        XCTAssertEqual(backend.calls.map(\.method), ["status", "authorization", "rebind"])
+        XCTAssertEqual(model.status, rebound)
+        XCTAssertNil(model.problem)
+        _ = await model.shutdown()
+    }
     func testBackendFailureDuringRecoveryRetainsUncertainState() async throws {
         let backend = controlledBackend(), clock = RecoveryClock()
         let model = AppModel(client: backend, now: { clock.date }, wait: { try await clock.wait($0) })
