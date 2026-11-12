@@ -41,7 +41,7 @@ struct NetworkOverview: View {
                     .font(.caption).foregroundStyle(.secondary)
             }.frame(minHeight: 170, alignment: .topLeading).nebulaSurface().frame(width: 170)
           }
-            Text("隧道状态与远端可达性分别确认，可在节点页测试连接。")
+            Text("隧道状态与远端可达性分别确认，可在节点页查看各节点的延迟。")
                 .font(.caption).foregroundStyle(.secondary)
             VStack(alignment: .leading, spacing: 10) {
                 Toggle("连接中断后自动恢复", isOn: $model.automaticRecovery)
