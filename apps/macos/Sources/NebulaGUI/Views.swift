@@ -97,6 +97,8 @@ struct MainView: View {
                 NebulaMark().fill(Palette.accent).frame(width: 28, height: 28)
                 Text("Nebula").font(.system(size: 18, weight: .semibold))
             }.padding(.top, 8).accessibilityElement(children: .combine)
+            if model.selected != nil { navigation }
+            Divider()
             Text("我的网络").font(.caption.weight(.medium)).foregroundStyle(.secondary)
             ScrollView {
                 VStack(spacing: 6) {
@@ -159,25 +161,30 @@ struct MainView: View {
                 }
               }.frame(minHeight: 40)
             }
-            if model.selected != nil { navigation }
         }.padding(.horizontal, 24).padding(.top, 16).padding(.bottom, 12)
     }
     private var navigation: some View {
-        HStack(spacing: 4) {
+        VStack(spacing: 6) {
             ForEach(WorkspacePage.allCases) { item in
                 Button { page = item } label: {
-                    Label(item.title, systemImage: item.symbol)
-                        .font(.system(size: 13, weight: page == item ? .semibold : .regular))
-                        .foregroundStyle(page == item ? Palette.accent : .secondary)
-                        .frame(maxWidth: .infinity, minHeight: 40)
-                        .background(page == item ? Palette.accent.opacity(0.12) : .clear, in: Capsule())
+                    HStack(spacing: 12) {
+                        Image(systemName: item.symbol).frame(width: 20)
+                        Text(item.title)
+                        Spacer(minLength: 0)
+                    }
+                    .font(.system(size: 13, weight: page == item ? .semibold : .regular))
+                    .foregroundStyle(page == item ? Palette.accent : .primary)
+                    .padding(.horizontal, 12)
+                    .frame(maxWidth: .infinity, minHeight: 40)
+                    .background(page == item ? Palette.accent.opacity(0.12) : .clear,
+                                in: RoundedRectangle(cornerRadius: Palette.medium))
                 }.buttonStyle(PressStyle())
                     .keyboardShortcut(KeyEquivalent(item.shortcut), modifiers: .command)
                     .accessibilityLabel(item.title)
                     .accessibilityAddTraits(page == item ? .isSelected : [])
                     .help("\(item.title)（⌘\(String(item.shortcut))）")
             }
-        }.padding(4).background(Palette.surface, in: Capsule())
+        }.accessibilityElement(children: .contain).accessibilityLabel("页面导航")
     }
     private var emptyState: some View {
         VStack(alignment: .leading, spacing: 22) {

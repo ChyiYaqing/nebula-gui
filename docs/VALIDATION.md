@@ -627,3 +627,16 @@ rc5 → rc6（App 内更新，通过）：
 - 验收后由用户执行恢复，删除 hosts 测试行并还原代理例外。
 
 至此，App 内更新的两条路径都已实机验证：发布页地址正常时（rc3 → rc4、rc4 → rc5），以及发布页地址失败、改走 API 地址时（rc5 → rc6）。
+
+## 2026-11-12 左侧页面导航（Issue #90）
+
+按用户提供的参考图，将“概览、节点、配置、日志”从顶部横向导航移到现有左侧栏，在品牌标识下方纵向排列；选中页使用强调色与圆角背景。网络列表独立滚动，导入入口继续固定在侧栏底部。没有选择网络时仍显示导入空状态。
+
+验证环境：macOS 27.2.1（26B131）／arm64。
+
+- `NEBULA_GUI_APP_OUTPUT="$PWD/build/Review/Nebula.app" bash scripts/test.sh` 通过：包含 `scripts/build.sh`、固定内核校验、Go race 测试、107 项 Swift 测试（GUI 51／Client 56）及四项退出流程检查。独立构建输出未覆盖已安装 App。
+- `bash scripts/preview-ui.sh --build-only` 和 `nebula-ui-preview --verify-isolation` 通过。
+- 用隔离预览生成并逐张查看：900×720 浅色概览；760×570 浅色节点、配置与空状态；760×570 深色日志。四个导航项的图标、文字、选中状态均完整显示；内容与网络列表可独立滚动。截图仅含合成数据，保存在忽略目录 `build/Review/sidebar/`。
+- diff 审查：仅移动和重排现有导航，继续使用相同的 `page` 状态、⌘1–⌘4 绑定、选中辅助功能语义及已访问页面保留逻辑；`git diff --check` 通过。没有新增依赖或修改后台、配置、凭据和连接流程。
+
+未完成：电脑控制工具返回“Computer Use was not approved to use SidebarPreview”，因此未执行鼠标、⌘1–⌘4、网络选择和页面状态保留的实机交互验收，PR 保留 Draft。合成预览不是实际隧道或后台服务验收。本次未安装系统组件、替换 `/Applications` 中的 App 或发布版本。
