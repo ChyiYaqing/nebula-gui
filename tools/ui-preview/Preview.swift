@@ -18,12 +18,14 @@ import NebulaClient
 @MainActor struct PreviewUpdater: SoftwareUpdating {
     let offer: Bool
     var currentVersion: ReleaseVersion? { ReleaseVersion("0.1.0-rc1") }
+    var canInstallUpdates: Bool { true }
     func latest(after current: ReleaseVersion) async throws -> AvailableUpdate? {
         guard offer else { return nil }
         let page = URL(string: "https://github.com/ChyiYaqing/nebula-gui/releases/tag/v0.1.0-rc2")!
         return AvailableUpdate(version: ReleaseVersion("0.1.0-rc2")!, page: page, archive: page, signature: page, archiveSize: 1)
     }
     func prepare(_ update: AvailableUpdate) async throws -> URL { throw BackendProblem(code: "preview_only", message: "合成预览不下载或安装更新。") }
+    func discard(_ staged: URL) {}
     func install(_ staged: URL) throws { throw BackendProblem(code: "preview_only", message: "合成预览不下载或安装更新。") }
     func restart() {}
     func openPage(_ update: AvailableUpdate) {}

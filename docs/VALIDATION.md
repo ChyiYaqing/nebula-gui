@@ -666,3 +666,17 @@ rc5 → rc6（App 内更新，通过）：
 - 新增回归测试 `testConnectAfterRemovalOpensReviewInInstallMode`：移除模式残留且后台不可用时连接，审阅窗口打开、两种模式均复位、不发送后台请求。
 - `NEBULA_GUI_APP_OUTPUT="$PWD/build/Review/Nebula.app" bash scripts/test.sh` 通过（Go race、108 项 Swift 测试：GUI 52／Client 56、四项退出流程检查）；`git diff --check` 通过。
 - 未验证：“取消”在保存中变灰只通过代码审查与构建确认，没有自动化或实机交互检查；真实的“移除后台 → 再启用”流程需要管理员授权和系统组件变更，本次未执行。
+
+## 2026-11-12 软件更新失败路径（Issue #99）
+
+来源于当日对 Swift GUI 的只读审计，已对照代码确认。实现由 codex 按 Issue 范围完成，代理审查 diff 后提交。
+
+- 下载完成后、替换 App 前重新检查是否有其他操作或管理员授权在进行；有则丢弃已暂存的更新、不替换不重启，提示稍后重试，可再次安装。
+- 未内置更新公钥的构建不再显示“下载并安装”，状态文案指向发布页；`prepare` 在任何下载之前拒绝。
+- 替换失败后恢复原 App 也失败时，改为报告 `update_restore_failed` 并给出备份 App 的路径，不再提示“原 App 保持不变”；恢复成功时提示不变。
+
+验证：
+
+- 新增 5 项回归测试（测试替身与临时目录，不访问网络或 `/Applications`）。`NEBULA_GUI_APP_OUTPUT="$PWD/build/Review/Nebula.app" bash scripts/test.sh` 通过：Go race、113 项 Swift 测试（GUI 56／Client 57）、四项退出流程检查。预览构建与隔离检查、`git diff --check` 通过。
+- codex 在其沙箱内运行时 `testAppleScriptReturnsStructuredFailureWithoutRawOutput` 失败（`osascript -2740`）；同一提交在本机与 CI 通过，判断为沙箱环境限制，未进一步调查。
+- 未验证：正常更新路径的实机下载、替换与重启没有复验，留待下一个候选版本发布时进行；本次未发布版本、未替换已安装 App。

@@ -684,6 +684,7 @@ enum UpdateState: Equatable {
 
 extension AppModel {
     var updatesSupported: Bool { updater?.currentVersion != nil }
+    var canInstallUpdates: Bool { updater?.canInstallUpdates == true }
     var currentVersionText: String { updater?.currentVersion?.description ?? "开发版本" }
     var availableUpdate: AvailableUpdate? {
         switch updateState {
@@ -730,13 +731,19 @@ extension AppModel {
     /// Called after the user confirmed that the connection will be interrupted.
     func installUpdate() async {
         guard let updater, let update = availableUpdate, update.installable, !updateInProgress, !shuttingDown else { return }
+        guard updater.canInstallUpdates else {
+            updateState = .failed("此版本没有内置更新签名公钥，无法自动安装。请从发布页手动下载。", update); return
+        }
         guard !busy, !authorizationInProgress else {
             updateState = .failed("请等待当前操作完成后再安装更新。", update); return
         }
         updateState = .installing(update)
         do {
             let staged = try await updater.prepare(update)
-            guard !shuttingDown else { return }
+            guard !shuttingDown else { updater.discard(staged); return }
+            guard !busy, !authorizationInProgress else {
+                updater.discard(staged); updateState = .failed("请等待当前操作完成后再安装更新。", update); return
+            }
             try updater.install(staged)
             updateState = .installed(update)
             updater.restart()

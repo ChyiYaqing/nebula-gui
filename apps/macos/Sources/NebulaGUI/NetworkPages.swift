@@ -294,7 +294,9 @@ struct SoftwareUpdateSettings: View {
             return "上次检查：" + last.formatted(date: .abbreviated, time: .shortened)
         case .checking: return "正在检查更新…"
         case .upToDate: return "已是最新版本。"
-        case .available(let update): return update.installable ? "发现新版本 \(update.version)。" : "发现新版本 \(update.version)，但缺少签名的更新包，请从发布页下载。"
+        case .available(let update):
+            guard model.canInstallUpdates else { return "发现新版本 \(update.version)，但此版本没有内置更新签名公钥，请从发布页手动下载。" }
+            return update.installable ? "发现新版本 \(update.version)。" : "发现新版本 \(update.version)，但缺少签名的更新包，请从发布页下载。"
         case .installing(let update): return "正在下载并校验 \(update.version)…"
         case .installed(let update): return "已安装 \(update.version)，正在重启；如未自动打开，请重新打开 Nebula。"
         case .failed(let message, _): return message
@@ -313,7 +315,7 @@ struct SoftwareUpdateSettings: View {
                 Button("检查更新") { Task { await model.checkForUpdates() } }
                     .disabled(!model.updatesSupported || model.updateInProgress)
                 if let update = model.availableUpdate {
-                    if update.installable {
+                    if update.installable && model.canInstallUpdates {
                         Button("下载并安装 \(update.version.description)…") { confirming = true }
                             .disabled(model.updateInProgress || model.busy)
                     }

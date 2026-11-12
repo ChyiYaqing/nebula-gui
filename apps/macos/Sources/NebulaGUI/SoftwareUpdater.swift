@@ -5,9 +5,12 @@ import NebulaClient
 /// keeps its own user-approved upgrade flow.
 @MainActor protocol SoftwareUpdating {
     var currentVersion: ReleaseVersion? { get }
+    var canInstallUpdates: Bool { get }
     func latest(after current: ReleaseVersion) async throws -> AvailableUpdate?
     /// Downloads, verifies the signature, extracts and validates. Returns the staged App.
     func prepare(_ update: AvailableUpdate) async throws -> URL
+    /// Removes the temporary archive and extracted App when installation is abandoned.
+    func discard(_ staged: URL)
     /// Replaces the running App with the staged one.
     func install(_ staged: URL) throws
     /// Quits (which disconnects) and reopens the App once this process has exited.
@@ -32,6 +35,7 @@ struct GitHubSoftwareUpdater: SoftwareUpdating {
     }
 
     var currentVersion: ReleaseVersion? { (info["NebulaReleaseVersion"] as? String).flatMap { ReleaseVersion($0) } }
+    var canInstallUpdates: Bool { !(info["NebulaUpdatePublicKey"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     private var userAgent: String { "NebulaGUI/\(currentVersion?.description ?? "unknown")" }
 
     func latest(after current: ReleaseVersion) async throws -> AvailableUpdate? {
@@ -46,6 +50,9 @@ struct GitHubSoftwareUpdater: SoftwareUpdating {
     }
 
     func prepare(_ update: AvailableUpdate) async throws -> URL {
+        guard canInstallUpdates else {
+            throw BackendProblem(code: "update_key_missing", message: "此版本没有内置更新签名公钥，无法自动安装。请从发布页手动下载。")
+        }
         if let problem = UpdateInstaller.locationProblem(bundle) { throw problem }
         guard let archiveURL = update.archive, let signatureURL = update.signature else {
             throw BackendProblem(code: "update_not_installable", message: "此版本缺少签名的更新包，请从发布页手动下载。")
@@ -71,9 +78,10 @@ struct GitHubSoftwareUpdater: SoftwareUpdating {
     }
 
     func install(_ staged: URL) throws {
-        defer { try? FileManager.default.removeItem(at: staged.deletingLastPathComponent().deletingLastPathComponent()) }
+        defer { discard(staged) }
         try UpdateInstaller.replace(bundle, with: staged)
     }
+    func discard(_ staged: URL) { try? FileManager.default.removeItem(at: staged.deletingLastPathComponent().deletingLastPathComponent()) }
 
     /// A fixed script waits up to 60 s for this process to exit, then opens the App path.
     /// Both values are passed as arguments, never interpolated into the script.

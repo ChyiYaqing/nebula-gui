@@ -184,15 +184,16 @@ public enum UpdateInstaller {
         try FileManager.default.url(for: .itemReplacementDirectory, in: .userDomainMask, appropriateFor: bundle, create: true)
     }
     /// The original App stays in place until the new one is ready, and is restored if
-    /// the second rename fails.
-    public static func replace(_ bundle: URL, with staged: URL) throws {
+    /// the second rename fails. If restoration fails, the backup is kept for recovery.
+    public static func replace(_ bundle: URL, with staged: URL, move: (URL, URL) throws -> Void = { try FileManager.default.moveItem(at: $0, to: $1) }) throws {
         let manager = FileManager.default
         let backup = bundle.deletingLastPathComponent().appendingPathComponent(".Nebula-update-\(UUID().uuidString).app", isDirectory: true)
-        do { try manager.moveItem(at: bundle, to: backup) }
+        do { try move(bundle, backup) }
         catch { throw BackendProblem(code: "update_replace_failed", message: "无法替换当前 App，原 App 保持不变。") }
-        do { try manager.moveItem(at: staged, to: bundle) }
+        do { try move(staged, bundle) }
         catch {
-            try? manager.moveItem(at: backup, to: bundle)
+            do { try move(backup, bundle) }
+            catch { throw BackendProblem(code: "update_restore_failed", message: "无法替换当前 App，且恢复原 App 失败。原 App 已保留在备份位置：\(backup.path)。请从该位置恢复后再试。") }
             throw BackendProblem(code: "update_replace_failed", message: "无法替换当前 App，原 App 保持不变。")
         }
         // The running process keeps its mapped code; the old bundle is no longer needed.
