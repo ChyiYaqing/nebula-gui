@@ -6,16 +6,20 @@ import NebulaClient
 /// Records update steps; never downloads, replaces an App or quits.
 @MainActor final class FakeUpdater: SoftwareUpdating {
     var currentVersion = ReleaseVersion("0.1.0-rc1")
+    var canInstallUpdates = true
     var latestResult: Result<AvailableUpdate?, Error> = .success(nil)
     var prepareError: Error?
     var installError: Error?
+    var prepareAction: (() async throws -> URL)?
     private(set) var steps: [String] = []
     func latest(after current: ReleaseVersion) async throws -> AvailableUpdate? { steps.append("latest \(current)"); return try latestResult.get() }
     func prepare(_ update: AvailableUpdate) async throws -> URL {
         steps.append("prepare \(update.version)")
         if let prepareError { throw prepareError }
+        if let prepareAction { return try await prepareAction() }
         return URL(fileURLWithPath: "/staged/Nebula.app")
     }
+    func discard(_ staged: URL) { steps.append("discard \(staged.lastPathComponent)") }
     func install(_ staged: URL) throws { steps.append("install"); if let installError { throw installError } }
     func restart() { steps.append("restart") }
     func openPage(_ update: AvailableUpdate) { steps.append("open \(update.page.lastPathComponent)") }
@@ -130,6 +134,40 @@ extension AppModelTests {
         XCTAssertFalse(updater.steps.contains { $0.hasPrefix("prepare") })
         XCTAssertEqual(model.updateState, .failed("请等待当前操作完成后再安装更新。", update()))
     }
+
+    func testInstallRechecksOtherOperationsAfterPreparingAndCanRetry() async throws {
+        let updater = FakeUpdater(); updater.latestResult = .success(update())
+        let model = AppModel(client: controlledBackend(), defaults: updateDefaults(), updater: updater)
+        let preparing = expectation(description: "preparing update")
+        var prepared: CheckedContinuation<URL, Error>?
+        updater.prepareAction = { try await withCheckedThrowingContinuation { prepared = $0; preparing.fulfill() } }
+        await model.checkForUpdates()
+        let installing = Task { await model.installUpdate() }
+        await fulfillment(of: [preparing], timeout: 2)
+        model.busy = true
+        prepared?.resume(returning: URL(fileURLWithPath: "/staged/Nebula.app"))
+        await installing.value
+        XCTAssertEqual(updater.steps, ["latest 0.1.0-rc1", "prepare 0.1.0-rc2", "discard Nebula.app"], "no replacement or restart while another operation is running")
+        XCTAssertEqual(model.updateState, .failed("请等待当前操作完成后再安装更新。", update()))
+        XCTAssertFalse(model.updateInProgress)
+        model.busy = false; updater.prepareAction = nil
+        await model.installUpdate()
+        XCTAssertEqual(updater.steps.suffix(3), ["prepare 0.1.0-rc2", "install", "restart"])
+        XCTAssertEqual(model.updateState, .installed(update()))
+    }
+
+    func testBuildWithoutPublicKeyOnlyChecksUpdatesAndOpensReleasePage() async throws {
+        let updater = FakeUpdater(); updater.canInstallUpdates = false; updater.latestResult = .success(update())
+        let model = AppModel(client: controlledBackend(), defaults: updateDefaults(), updater: updater)
+        XCTAssertTrue(model.updatesSupported)
+        XCTAssertFalse(model.canInstallUpdates, "installation entry is unavailable even for a signed release")
+        await model.checkForUpdates()
+        XCTAssertEqual(model.updateState, .available(update()))
+        await model.installUpdate()
+        XCTAssertEqual(model.updateState, .failed("此版本没有内置更新签名公钥，无法自动安装。请从发布页手动下载。", update()))
+        model.openUpdatePage()
+        XCTAssertEqual(updater.steps, ["latest 0.1.0-rc1", "open v0.1.0-rc2"], "no preparation, replacement or restart")
+    }
 }
 
 /// Serves fixed responses by URL and records each request with its Accept header (#74).
@@ -158,6 +196,45 @@ final class UpdateDownloadTests: XCTestCase {
     private let page = URL(string: "https://github.com/ChyiYaqing/nebula-gui/releases/download/v0.1.0-rc3/Nebula-v0.1.0-rc3-macos-universal.zip.sig")!
     private let api = URL(string: "https://api.github.com/repos/ChyiYaqing/nebula-gui/releases/assets/726273122")!
     override func setUp() { StubDownloads.responses = [:]; StubDownloads.requests = [] }
+
+    @MainActor private func temporaryBundle(publicKey: String?) throws -> Bundle {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("nebula-update-build-\(UUID().uuidString)")
+        let app = root.appendingPathComponent("Nebula.app"), contents = app.appendingPathComponent("Contents")
+        try FileManager.default.createDirectory(at: contents, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: root) }
+        var info = ["CFBundleIdentifier": "net.nebula.gui.test", "CFBundlePackageType": "APPL", "NebulaReleaseVersion": "0.1.0-rc1"]
+        info["NebulaUpdatePublicKey"] = publicKey
+        try PropertyListSerialization.data(fromPropertyList: info, format: .xml, options: 0).write(to: contents.appendingPathComponent("Info.plist"))
+        return try XCTUnwrap(Bundle(url: app))
+    }
+
+    @MainActor func testPrepareRejectsMissingPublicKeyBeforeAnyDownload() async throws {
+        let update = AvailableUpdate(version: ReleaseVersion("0.1.0-rc3")!, page: page, archive: page.deletingPathExtension(), signature: page, archiveSize: 1000)
+        for key: String? in [nil, "", " \n\t"] {
+            let updater = GitHubSoftwareUpdater(bundle: try temporaryBundle(publicKey: key), session: StubDownloads.session())
+            XCTAssertFalse(updater.canInstallUpdates)
+            do { _ = try await updater.prepare(update); XCTFail("missing update key") }
+            catch let problem as BackendProblem {
+                XCTAssertEqual(problem.code, "update_key_missing")
+                XCTAssertTrue(problem.message.contains("发布页"))
+            }
+        }
+        XCTAssertTrue(StubDownloads.requests.isEmpty, "neither archive nor signature is downloaded")
+    }
+
+    @MainActor func testEmbeddedPublicKeyEnablesInstallationAndDiscardCleansStagingOnly() throws {
+        let bundle = try temporaryBundle(publicKey: Data(repeating: 0, count: 32).base64EncodedString())
+        let updater = GitHubSoftwareUpdater(bundle: bundle, session: StubDownloads.session())
+        XCTAssertTrue(updater.canInstallUpdates)
+        let root = bundle.bundleURL.deletingLastPathComponent(), staging = root.appendingPathComponent("staging")
+        let staged = staging.appendingPathComponent("unpacked/Nebula.app")
+        try FileManager.default.createDirectory(at: staged, withIntermediateDirectories: true)
+        try Data("archive".utf8).write(to: staging.appendingPathComponent("update.zip"))
+        updater.discard(staged)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: staging.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: bundle.bundleURL.path), "the installed App stays outside staging cleanup")
+        XCTAssertTrue(StubDownloads.requests.isEmpty)
+    }
 
     @MainActor private func download(fallback: URL?, limit: Int = 1024) async throws -> Data {
         try await GitHubSoftwareUpdater(session: StubDownloads.session()).download(page, fallback: fallback, limit: limit)

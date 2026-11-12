@@ -180,4 +180,31 @@ final class SoftwareUpdateTests: XCTestCase {
         defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: parent.path) }
         XCTAssertEqual(UpdateInstaller.locationProblem(installed)?.code, "update_permission")
     }
+
+    func testFailedReplacementReportsWhetherTheOriginalWasRestored() throws {
+        for restoreFails in [false, true] {
+            let root = try temporaryDirectory(), manager = FileManager.default
+            let installed = try makeApp(at: root.appendingPathComponent("Applications/Nebula.app"), release: "0.1.0", sign: false)
+            let staged = try makeApp(at: root.appendingPathComponent("staging/Nebula.app"), release: "0.2.0", sign: false)
+            var backup: URL?, moves = 0
+            XCTAssertThrowsError(try UpdateInstaller.replace(installed, with: staged, move: { from, to in
+                moves += 1
+                if moves == 1 { backup = to }
+                if moves == 2 || (moves == 3 && restoreFails) { throw CocoaError(.fileWriteNoPermission) }
+                try manager.moveItem(at: from, to: to)
+            })) { error in
+                let problem = error as? BackendProblem
+                XCTAssertEqual(problem?.code, restoreFails ? "update_restore_failed" : "update_replace_failed")
+                if restoreFails { XCTAssertTrue(problem?.message.contains(backup!.path) == true); XCTAssertFalse(problem?.message.contains("原 App 保持不变") == true) }
+                else { XCTAssertEqual(problem?.message, "无法替换当前 App，原 App 保持不变。") }
+            }
+            XCTAssertEqual(moves, 3)
+            let original = restoreFails ? try XCTUnwrap(backup) : installed
+            let data = try Data(contentsOf: original.appendingPathComponent("Contents/Info.plist"))
+            XCTAssertEqual((try PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any])?["NebulaReleaseVersion"] as? String, "0.1.0")
+            XCTAssertEqual(manager.fileExists(atPath: installed.path), !restoreFails)
+            XCTAssertEqual(manager.fileExists(atPath: try XCTUnwrap(backup).path), restoreFails)
+            XCTAssertTrue(manager.fileExists(atPath: staged.path))
+        }
+    }
 }
