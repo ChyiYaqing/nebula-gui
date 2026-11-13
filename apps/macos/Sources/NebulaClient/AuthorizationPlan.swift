@@ -35,6 +35,37 @@ public struct AuthorizationPlan: Sendable {
         /bin/sleep 0.2
       done
     }
+    # The lock names its holder, so one left behind by a killed transaction or a power
+    # loss (#118) is recognised: the system has restarted since, or the holder is gone.
+    lock=/Library/PrivilegedHelperTools/net.nebula.gui/.install.lock
+    legacy_lock=/Library/PrivilegedHelperTools/net.nebula.gui/.install-lock
+    boot=$(/usr/sbin/sysctl -n kern.boottime | /usr/bin/awk '{print $4}' | /usr/bin/tr -d ,)
+    lock_is_stale() {
+      [ -f "$lock" ] && [ ! -L "$lock" ] || return 1
+      holder=''; started=''
+      read -r holder started < "$lock" || true
+      case "$holder" in ''|*[!0-9]*) return 1 ;; esac
+      [ "$started" = "$boot" ] || return 0
+      ! /bin/kill -0 "$holder" 2>/dev/null
+    }
+    acquire_lock() {
+      # Releases before #118 locked with a directory and no holder; one that has
+      # sat for ten minutes was left behind.
+      if [ -d "$legacy_lock" ] && [ ! -L "$legacy_lock" ]; then
+        [ -n "$(/usr/bin/find "$legacy_lock" -maxdepth 0 -mmin +10)" ] || return 1
+        /bin/rmdir "$legacy_lock" || return 1
+      fi
+      claim=$(/usr/bin/mktemp /Library/PrivilegedHelperTools/net.nebula.gui/.claim.XXXXXX)
+      echo "$$ $boot" > "$claim"
+      # A hard link either creates the lock complete with its holder or fails.
+      if ! /bin/ln "$claim" "$lock" 2>/dev/null; then
+        if ! lock_is_stale || ! /bin/rm -f "$lock" || ! /bin/ln "$claim" "$lock" 2>/dev/null; then
+          /bin/rm -f "$claim"
+          return 1
+        fi
+      fi
+      /bin/rm -f "$claim"
+    }
     """#
     public static func install(bundle: URL, uid: UInt32, upgrading: Bool = false) throws -> AuthorizationPlan {
         guard uid > 0 else { throw BackendProblem(code: "invalid_user", message: "请用普通用户打开应用。") }
@@ -73,7 +104,7 @@ public struct AuthorizationPlan: Sendable {
           echo 'The previous Nebula service is still loaded.' >&2
           exit 73
         fi
-        /bin/mkdir /Library/PrivilegedHelperTools/net.nebula.gui/.install-lock || exit 79
+        acquire_lock || exit 79
         stage=''
         plist_stage=''
         old_helper=''
@@ -101,7 +132,7 @@ public struct AuthorizationPlan: Sendable {
             [ -z "$old_helper" ] || /bin/rm -f "$old_helper"
             [ -z "$old_plist" ] || /bin/rm -f "$old_plist"
           fi
-          /bin/rmdir /Library/PrivilegedHelperTools/net.nebula.gui/.install-lock
+          /bin/rm -f "$lock"
         }
         trap cleanup EXIT
         \(prepare)
@@ -146,8 +177,8 @@ public struct AuthorizationPlan: Sendable {
     }
     public static func uninstall() -> AuthorizationPlan {
         AuthorizationPlan(script: preflight + "\n" + """
-        /bin/mkdir /Library/PrivilegedHelperTools/net.nebula.gui/.install-lock || exit 79
-        trap '/bin/rmdir /Library/PrivilegedHelperTools/net.nebula.gui/.install-lock' EXIT
+        acquire_lock || exit 79
+        trap '/bin/rm -f "$lock"' EXIT
         stop_helper || exit 75
         /bin/rm -f \(shellQuote(plistPath)) \(shellQuote(helperPath))
 

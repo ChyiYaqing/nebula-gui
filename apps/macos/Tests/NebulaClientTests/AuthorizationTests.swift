@@ -56,7 +56,7 @@ final class AuthorizationTests: XCTestCase {
         let plan = try AuthorizationPlan.install(bundle: root, uid: 501)
         XCTAssertTrue(plan.script.contains("-health"))
         XCTAssertTrue(plan.script.contains("published"))
-        XCTAssertTrue(plan.script.contains(".install-lock"))
+        XCTAssertTrue(plan.script.contains("acquire_lock || exit 79"))
         XCTAssertTrue(plan.script.contains("shasum -a 256"))
         XCTAssertTrue(plan.script.contains("codesign --verify --strict"))
         XCTAssertTrue(plan.script.contains("sudo -u '#501'"))
