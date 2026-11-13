@@ -13,8 +13,11 @@ if [[ -z "${NEBULA_GUI_E2E_APP:-}" ]]; then NEBULA_GUI_APP_OUTPUT="$APP" bash "$
 mkdir -p "$ROOT/.build/bin"
 swiftc -O -o "$AX" "$ROOT/tools/e2e/AXDriver.swift"
 
-# macOS resolves /tmp to /private/tmp; the store must be reached by its real path.
-WORK="$(cd "$(mktemp -d /private/tmp/nebula-e2e.XXXXXX)" && pwd -P)"
+# /private/tmp is already the real path the store must be reached by. Never derive
+# WORK through `cd`: an empty mktemp result would resolve to the current directory,
+# and cleanup would then delete it.
+WORK="$(mktemp -d /private/tmp/nebula-e2e.XXXXXX)"
+[[ "$WORK" == /private/tmp/nebula-e2e.?* && -d "$WORK" && ! -L "$WORK" ]] || { echo "FAIL cannot create a temporary directory"; exit 1; }
 APP_PID=""
 cleanup() {
   if [[ -n "$APP_PID" ]] && kill -0 "$APP_PID" 2>/dev/null; then "$AX" "$APP_PID" quit 20 >/dev/null 2>&1 || kill "$APP_PID" 2>/dev/null || true; fi
