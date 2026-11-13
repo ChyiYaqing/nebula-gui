@@ -357,16 +357,16 @@ struct AuthorizationStatusView: View {
     @ObservedObject var model: AppModel
     private var uncertain: Bool { model.status.isStarted && !model.authorization.available }
     private var title: String {
-        uncertain ? "连接后台状态待确认" : model.authorization.updateRequired == true ? "连接后台可升级" : model.authorization.available ? "连接后台已启用" : "首次连接需要管理员授权"
+        uncertain ? "连接后台状态待确认" : model.authorization.helperIsNewer ? "连接后台来自较新的 Nebula" : model.authorization.updateRequired == true ? "连接后台可升级" : model.authorization.available ? "连接后台已启用" : "首次连接需要管理员授权"
     }
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Label(title, systemImage: model.authorization.available ? "checkmark.shield" : "lock.shield")
                 .font(.system(size: 13, weight: .medium))
                 .foregroundStyle(model.authorization.available && model.authorization.updateRequired != true ? Palette.accent : .orange)
-            Text(uncertain ? "上次确认隧道已启动，仍可从顶部断开，再检查后台状态。" : model.authorization.updateRequired == true ? "升级需要重启网络组件，请先断开连接。已保存配置会保留。" : model.authorization.available ? "网络组件负责隧道，GUI 以普通用户身份运行。" : "启用前会显示安装内容，再由 macOS 系统窗口请求管理员授权。")
+            Text(uncertain ? "上次确认隧道已启动，仍可从顶部断开，再检查后台状态。" : model.authorization.helperIsNewer ? "已安装的连接后台比此 App 新，建议更新 Nebula。如需继续使用此版本，可把后台换回此版本，需先断开连接。" : model.authorization.updateRequired == true ? "升级需要重启网络组件，请先断开连接。已保存配置会保留。" : model.authorization.available ? "网络组件负责隧道，GUI 以普通用户身份运行。" : "启用前会显示安装内容，再由 macOS 系统窗口请求管理员授权。")
                 .font(.caption).foregroundStyle(.secondary)
-            Button(model.authorization.updateRequired == true ? "升级后台" : model.authorization.available ? "管理后台" : "启用连接后台") {
+            Button(model.authorization.helperIsNewer ? "换回此版本后台" : model.authorization.updateRequired == true ? "升级后台" : model.authorization.available ? "管理后台" : "启用连接后台") {
                 model.upgradingAuthorization = model.authorization.updateRequired == true
                 model.removingAuthorization = model.authorization.available && !model.upgradingAuthorization
                 model.showAuthorizationReview = true

@@ -53,9 +53,9 @@ struct AuthorizationReviewView: View {
     @State private var consent = false
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
-            Label(model.removingAuthorization ? "移除连接后台" : model.upgradingAuthorization ? "升级连接后台" : "启用连接后台", systemImage: "lock.shield")
+            Label(model.removingAuthorization ? "移除连接后台" : model.upgradingAuthorization ? (model.authorization.helperIsNewer ? "换回此版本的连接后台" : "升级连接后台") : "启用连接后台", systemImage: "lock.shield")
                 .font(.title2.weight(.semibold))
-            Text(model.removingAuthorization ? "将停止并移除 Nebula GUI 的网络组件。原始配置与应用保存的网络不会删除。" : model.upgradingAuthorization ? "将重启并升级本应用的网络组件，现有受管连接会中断。失败时尝试恢复旧组件；已保存的配置保留。" : "安装仅供当前登录用户控制的 root 网络组件。GUI 保持普通用户身份，管理员密码仅在 macOS 系统窗口输入。")
+            Text(model.removingAuthorization ? "将停止并移除 Nebula GUI 的网络组件。原始配置与应用保存的网络不会删除。" : model.upgradingAuthorization ? (model.authorization.helperIsNewer ? "已安装的网络组件来自较新的 Nebula。继续会把它换成此 App 自带的较旧版本，现有受管连接会中断，较新版本修复的问题可能重新出现；建议改为更新 Nebula。已保存的配置保留。" : "将重启并升级本应用的网络组件，现有受管连接会中断。失败时尝试恢复旧组件；已保存的配置保留。") : "安装仅供当前登录用户控制的 root 网络组件。GUI 保持普通用户身份，管理员密码仅在 macOS 系统窗口输入。")
                 .font(.callout).fixedSize(horizontal: false, vertical: true)
             VStack(alignment: .leading, spacing: 10) {
                 Text("将写入／移除以下文件").font(.caption.weight(.semibold))
@@ -68,7 +68,7 @@ struct AuthorizationReviewView: View {
                 Text("组件开机启动，但不会自动连接。只接受当前用户的连接、断开和查询请求；GUI 后台退出即清理隧道。旧 Nebula 服务若仍加载，安装会被拒绝。")
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
-            Toggle(model.removingAuthorization ? "我同意停止并移除此组件" : model.upgradingAuthorization ? "我同意重启并升级上述网络组件" : "我同意安装上述网络组件并授予系统权限", isOn: $consent)
+            Toggle(model.removingAuthorization ? "我同意停止并移除此组件" : model.upgradingAuthorization ? (model.authorization.helperIsNewer ? "我同意重启并换回较旧的网络组件" : "我同意重启并升级上述网络组件") : "我同意安装上述网络组件并授予系统权限", isOn: $consent)
                 .toggleStyle(.checkbox)
             HStack {
                 Button("取消") { model.showAuthorizationReview = false }.keyboardShortcut(.cancelAction)
@@ -76,7 +76,7 @@ struct AuthorizationReviewView: View {
                     Button("移除已有组件…") { model.removingAuthorization = true; model.upgradingAuthorization = false; consent = false }
                 }
                 Spacer()
-                Button(model.removingAuthorization ? "授权移除" : model.upgradingAuthorization ? "授权升级" : "授权安装") {
+                Button(model.removingAuthorization ? "授权移除" : model.upgradingAuthorization ? (model.authorization.helperIsNewer ? "授权换回" : "授权升级") : "授权安装") {
                     Task { await model.manageAuthorization(removing: model.removingAuthorization) }
                 }.buttonStyle(.borderedProminent).disabled(!consent || model.busy)
             }

@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -30,6 +31,8 @@ type AuthorizationStatus struct {
 	Reason         string `json:"reason,omitempty"`
 	HelperRelease  string `json:"helperRelease,omitempty"`
 	UpdateRequired bool   `json:"updateRequired"`
+	// HelperNewer: the installed component is from a later release than this App (#115).
+	HelperNewer bool `json:"helperNewer"`
 }
 type helperRequest struct {
 	Version int    `json:"version"`
@@ -179,7 +182,7 @@ func (e *PrivilegedEngine) Authorization() AuthorizationStatus {
 	if err != nil {
 		return AuthorizationStatus{Reason: "unavailable"}
 	}
-	return AuthorizationStatus{Available: true, Revision: reply.Revision, HelperRelease: reply.HelperRelease, UpdateRequired: reply.HelperRelease != HelperRelease}
+	return AuthorizationStatus{Available: true, Revision: reply.Revision, HelperRelease: reply.HelperRelease, UpdateRequired: reply.HelperRelease != HelperRelease, HelperNewer: releaseNewer(reply.HelperRelease, HelperRelease)}
 }
 func (e *PrivilegedEngine) exchange(method, config string) (helperReply, error) {
 	if e.conn == nil {
@@ -652,4 +655,37 @@ func secureSocket(path string, uid uint32) error {
 		return errors.New("untrusted control socket")
 	}
 	return nil
+}
+
+// releaseNewer reports whether dotted release a is later than b. Anything that is
+// not plain dotted numbers is not treated as newer.
+func releaseNewer(a, b string) bool {
+	left, right := releaseParts(a), releaseParts(b)
+	if left == nil || right == nil {
+		return false
+	}
+	for i := 0; i < len(left) || i < len(right); i++ {
+		var x, y uint64
+		if i < len(left) {
+			x = left[i]
+		}
+		if i < len(right) {
+			y = right[i]
+		}
+		if x != y {
+			return x > y
+		}
+	}
+	return false
+}
+func releaseParts(release string) []uint64 {
+	var parts []uint64
+	for _, text := range strings.Split(release, ".") {
+		value, err := strconv.ParseUint(text, 10, 32)
+		if err != nil {
+			return nil
+		}
+		parts = append(parts, value)
+	}
+	return parts
 }

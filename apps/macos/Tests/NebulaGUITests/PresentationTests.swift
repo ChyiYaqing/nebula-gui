@@ -115,6 +115,9 @@ extension AppModelTests {
         model.kernelLogs = try decode(#"{"available":true,"entries":[]}"#)
         model.authorization = try JSONDecoder().decode(AuthorizationState.self, from: Data(#"{"available":true,"helperRelease":"0.3.1","updateRequired":true}"#.utf8))
         XCTAssertEqual(model.kernelLogNotice, "当前连接后台不提供内核日志，升级连接后台后可查看。")
+        // #115: a component newer than this App is not something an upgrade fixes.
+        model.authorization = try JSONDecoder().decode(AuthorizationState.self, from: Data(#"{"available":true,"helperRelease":"9.9.9","updateRequired":true,"helperNewer":true}"#.utf8))
+        XCTAssertEqual(model.kernelLogNotice, "暂无内核日志。连接网络后，Nebula 的启动、握手和错误信息会显示在这里。")
         model.authorization = try JSONDecoder().decode(AuthorizationState.self, from: Data(#"{"available":true,"updateRequired":false}"#.utf8))
         XCTAssertEqual(model.kernelLogNotice, "暂无内核日志。连接网络后，Nebula 的启动、握手和错误信息会显示在这里。")
         model.kernelLogs = try decode(#"{"available":false,"entries":[]}"#)

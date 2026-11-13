@@ -104,6 +104,10 @@ import NebulaClient
                 model.authorization = try! JSONDecoder().decode(AuthorizationState.self, from: Data(#"{"available":true,"helperRelease":"0.3.1","updateRequired":true}"#.utf8))
                 model.kernelLogs = try! JSONDecoder().decode(KernelLogPage.self, from: Data(#"{"available":true,"entries":[]}"#.utf8))
             }
+            if scenario == "newer-helper" {
+                model.authorization = try! JSONDecoder().decode(AuthorizationState.self, from: Data(#"{"available":true,"helperRelease":"9.9.9","updateRequired":true,"helperNewer":true}"#.utf8))
+                model.upgradingAuthorization = args.contains("--review")
+            }
             if scenario == "update" { await model.checkForUpdates() }
             if scenario == "empty" { model.profiles = []; model.selectedID = nil }
             if scenario == "missing" || scenario == "unavailable" { model.authorization = .missing }
@@ -118,6 +122,7 @@ import NebulaClient
             let page = WorkspacePage(rawValue: option("--page", fallback: "overview")) ?? .overview
             let root: AnyView
             if args.contains("--menu") { root = AnyView(MenuContent(model: model)) }
+            else if args.contains("--review") { root = AnyView(AuthorizationReviewView(model: model)) }
             else { root = AnyView(MainView(model: model, page: page)) }
             let view = NSHostingView(rootView: root
                 .environment(\.colorScheme, dark ? .dark : .light)
