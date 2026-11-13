@@ -779,3 +779,17 @@ rc6 → rc7（App 内更新，通过；Apple Silicon，macOS 27.2.1；界面操�
 - `NEBULA_GUI_APP_OUTPUT="$PWD/build/PR115/Nebula.app" bash scripts/test.sh` 通过。
 - 隔离预览（合成数据，不连接）：`--scenario newer-helper` 渲染配置页卡片，加 `--review` 渲染审阅弹窗，文案与布局经截图确认。
 - 未验证：没有在实机上用旧版 App 对较新的后台走完“换回”流程（需要管理员授权）。已发布的 rc7 及更早版本不含此改动，遇到较新的后台仍会显示“升级后台”。
+
+## 2026-11-13 配置检查：防火墙规则字段、端口展开上限、导入与后台一致（Issue #117）
+
+来自只读审查，三项在修改前均用临时测试确认：
+- `port: 1-65535` 且各带不同 `ca_name` 的规则 1／8／32 条时，`Inspect` 累计分配约 60／305／1346 MiB，线性增长（固定内核按端口逐条分配）；同一校验也在 root 组件内执行。
+- 规则里把 `ca_sha` 写成 `ca_shaa` 可以通过检查，签发者限制随之消失。
+- `routines: 0` 通过导入检查，但 root 组件要求 ≥ 1，导入后每次连接都被拒绝；`dns` 含 `enabled` 以外的键同理（这一项只对照了代码）。
+
+现在共享策略 `validatePolicy` 在调用内核前检查：`firewall.inbound`／`outbound` 必须是对象列表；规则只允许 `port code proto host group groups cidr local_cidr ca_name ca_sha`（对照固定内核 `fb4ef139` 的 `convertRule`），其他键报告字段名并拒绝，不回显值；所有规则的端口范围合计不超过 131072 个端口。`routines`、`tun.tx_queue` 的下限和 DNS 键的限制移入共享策略，导入预览与 root 组件的结论一致。root 组件执行的校验有变化，`HelperRelease` 升为 0.4.3。
+
+- 新增 6 项测试：双向未知键及值不回显、全部允许的键仍可导入、两条全范围通过而三条在 500 ms 内被拒、端口计数边界、规则结构、导入与 root 组件校验一致拒绝零值及多余 DNS 键。
+- `NEBULA_GUI_APP_OUTPUT="$PWD/build/PR117/Nebula.app" bash scripts/test.sh` 通过。
+- 兼容性：已保存的配置若含上述情况，连接前会被拒绝并指出字段；此前这类配置要么连接必然失败，要么带着被忽略的字段运行。
+- 未验证：没有在实机把 root 组件升级到 0.4.3，也没有用超限配置对已安装组件做真实连接；其他系统与架构未验证。
