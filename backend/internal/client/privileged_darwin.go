@@ -17,7 +17,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-const HelperRelease = "0.4.1"
+const HelperRelease = "0.4.2"
 
 const HelperSocket = "/private/var/run/nebula-gui/helper.sock"
 const HelperExecutable = "/Library/PrivilegedHelperTools/net.nebula.gui/nebula-gui-helper"
@@ -441,6 +441,10 @@ func (s *HelperServer) Serve(listener *net.UnixListener) error {
 		}()
 	}
 }
+
+// helperIdleTimeout keeps idle connections from holding session slots.
+var helperIdleTimeout = 30 * time.Second
+
 func (s *HelperServer) handle(conn *net.UnixConn, session uint64) {
 	defer conn.Close()
 	defer func() {
@@ -465,7 +469,14 @@ func (s *HelperServer) handle(conn *net.UnixConn, session uint64) {
 		}
 	}()
 	for {
-		_ = conn.SetReadDeadline(time.Now().Add(30 * time.Second))
+		// Only a session without a tunnel is bounded by idle time. One that owns the
+		// tunnel ends by disconnect, by EOF when its controller goes away, or when the
+		// server stops: a quiet controller is not a reason to tear the tunnel down.
+		deadline := time.Time{}
+		if !ownsController {
+			deadline = time.Now().Add(helperIdleTimeout)
+		}
+		_ = conn.SetReadDeadline(deadline)
 		data, err := readHelperFrame(reader)
 		if err != nil {
 			return
