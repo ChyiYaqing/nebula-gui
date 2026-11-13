@@ -702,3 +702,15 @@ rc5 → rc6（App 内更新，通过）：
   - 之后重新打开已安装的 App，确认恢复为“隧道已启动”。
 - 环境发现：旧部署的 `com.slack.nebula`（root LaunchDaemon，KeepAlive）与 GUI 使用同一网络。它运行时 GUI 后台连接在 0.07 秒内以 `start_failed` 失败，已安装的 rc6 后台表现相同，与本改动无关；提示文案没有指出是另一个 Nebula 在运行。
 - 未验证：真实组件停顿超过 10 秒的迟到应答场景没有在实机复现（暂停 root 进程需要 sudo），该场景只有 socketpair 测试覆盖。实机回归证明的是正常路径未被改坏。
+
+## 2026-11-13 本机端到端测试入口（Issue #104）
+
+新增 `bash scripts/test-e2e.sh`、`tools/e2e/backend_e2e.py` 与 `tools/e2e/AXDriver.swift`，把 #96 实机回归时的临时做法固化为可重复的入口。用法、前提与不覆盖的范围见 `docs/DEVELOPMENT.md`。
+
+验证环境：macOS 27.2.1／arm64，已安装的 root 组件 0.4.1。
+
+- 隧道空闲时完整通过：后台级 27 次请求、14 条内核日志、事件顺序为 profile_imported、tunnel_started、network_refresh_requested、tunnel_stopped，断开后隧道接口数恢复；界面级连接后出现新的隧道接口，四个页面内容出现，断开、重连、已连接状态下退出后接口数恢复、后台进程结束。结束后 `/private/tmp` 下没有遗留的临时目录，没有遗留进程。
+- 组件被占用时（已安装的 App 保持连接）：输出 `SKIP` 并以退出码 2 结束，已有连接不受影响。
+- 运行完整流程前，代理通过辅助功能接口在已安装的 App 中断开了用户的连接，测试后重新连接并确认“隧道已启动”。未安装、升级或移除系统组件，未使用 sudo。
+- 首次运行时“退出”判定失败：命令行工具没有运行循环，`NSRunningApplication.isTerminated` 不更新；改为检查进程是否存在，并用 `open` 启动 App 后重跑通过。
+- 未覆盖：测试身份没有对端，不证明节点互通与延迟采样；未在缺少辅助功能权限、组件未安装或需升级的机器上实测对应的 `SKIP` 分支；未在 Intel 或 macOS 13 上运行。
