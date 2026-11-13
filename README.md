@@ -14,7 +14,7 @@ GUI 将 **Nebula v1.12.0 的 Go 源码库**编译进后台组件，隧道由 hel
 | macOS 包版本／构建号 | `0.1.0`；rc6 为 build `11`，rc5 为 build `10`，rc4 为 build `9`，rc3 为 build `8`，rc2 为 build `7`，rc1 为 build `5` | [构建脚本](scripts/build.sh)、对应附件的 `build-info.json` |
 | Nebula 上游版本 | `v1.12.0` | [上游 tag](https://github.com/slackhq/nebula/tree/v1.12.0) |
 | 固定内核提交 | `fb4ef139cbb4af67d142c72083fb735f56460e50` | [kernel-revision](scripts/kernel-revision)、[KernelRevision](backend/internal/client/model.go) |
-| helper 兼容发布号 | `0.4.1` | [HelperRelease](backend/internal/client/privileged_darwin.go) |
+| helper 兼容发布号 | `0.4.2` | [HelperRelease](backend/internal/client/privileged_darwin.go) |
 | GUI ↔ backend／backend ↔ helper JSON 协议 | `1` | [GUI 协议](backend/internal/client/model.go)、[helper 协议](backend/internal/client/privileged_darwin.go) |
 | Go 工具链要求 | `1.27.3` | [backend/go.mod](backend/go.mod) |
 
