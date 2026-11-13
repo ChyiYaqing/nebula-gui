@@ -18,7 +18,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-const HelperRelease = "0.4.2"
+const HelperRelease = "0.4.3"
 
 const HelperSocket = "/private/var/run/nebula-gui/helper.sock"
 const HelperExecutable = "/Library/PrivilegedHelperTools/net.nebula.gui/nebula-gui-helper"
@@ -364,28 +364,6 @@ func validateInline(data []byte, temporaryRoot string) (*Candidate, error) {
 		value, ok := pki[key].(string)
 		if !ok || !strings.HasPrefix(strings.TrimSpace(value), "-----BEGIN ") {
 			return nil, problem("inline_required", "授权后台只接受内嵌凭据，不接受文件路径。", "pki."+key)
-		}
-	}
-	// Disabled host DNS still has recovery hooks; no client-supplied recovery identity.
-	if dns := section(m, "dns"); dns != nil {
-		for key := range dns {
-			if key != "enabled" {
-				return nil, problem("unsupported", "授权后台不接受 DNS 参数。", "dns")
-			}
-		}
-	}
-	for _, field := range []string{"routines", "tun.tx_queue"} {
-		value := m[field]
-		limit := 16
-		if field == "tun.tx_queue" {
-			value = section(m, "tun")["tx_queue"]
-			limit = 65536
-		}
-		if value != nil {
-			n, ok := value.(int)
-			if !ok || n < 1 || n > limit {
-				return nil, problem("unsupported", "运行参数超出授权后台范围。", field)
-			}
 		}
 	}
 	f, err := os.CreateTemp(temporaryRoot, ".validate-*.yaml")

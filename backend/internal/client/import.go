@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -136,6 +137,52 @@ func validatePolicy(m map[string]any) error {
 		for k := range p {
 			if k != "ca" && k != "cert" && k != "key" && k != "blocklist" && k != "disconnect_invalid" && k != "disconnect_expired" {
 				return problem("unsupported", "不支持该凭据设置。", reportedField("pki", k))
+			}
+		}
+	}
+	// Disabled host DNS still has recovery hooks; no client-supplied recovery identity.
+	for key := range section(m, "dns") {
+		if key != "enabled" {
+			return problem("unsupported", "不支持该 DNS 参数。", "dns")
+		}
+	}
+	// The pinned kernel allocates per port per rule: measured ~42 MiB for
+	// one 1-65535 rule with its own ca_name.
+	ports := 0
+	for _, direction := range []string{"inbound", "outbound"} {
+		value := section(m, "firewall")[direction]
+		if value == nil {
+			continue
+		}
+		field := "firewall." + direction
+		rules, ok := value.([]any)
+		if !ok {
+			return problem("invalid_config", "防火墙规则必须是列表。", field)
+		}
+		for _, value := range rules {
+			rule, ok := value.(map[string]any)
+			if !ok {
+				return problem("invalid_config", "防火墙规则必须是对象。", field)
+			}
+			for key := range rule {
+				switch key {
+				case "port", "code", "proto", "host", "group", "groups", "cidr", "local_cidr", "ca_name", "ca_sha":
+				default:
+					return problem("unsupported", "防火墙规则包含不支持的字段。", reportedField(field, key))
+				}
+			}
+			count := 1
+			port, _ := rule["port"].(string)
+			if a, b, ok := strings.Cut(port, "-"); ok {
+				start, e1 := strconv.ParseUint(strings.Trim(a, " "), 10, 16)
+				end, e2 := strconv.ParseUint(strings.Trim(b, " "), 10, 16)
+				if e1 == nil && e2 == nil && start <= end {
+					count = int(end-start) + 1
+				}
+			}
+			ports += count
+			if ports > 131072 {
+				return problem("unsupported", "防火墙端口范围展开的规则过多，请使用 any 或缩小范围。", "firewall")
 			}
 		}
 	}
@@ -266,9 +313,9 @@ func Inspect(path, name string, files map[string]string, now time.Time) (*Candid
 // These bounds precede config-test, which also allocates handshake channels.
 func validateRuntimeBounds(m map[string]any) error {
 	limits := map[string][2]int{
-		"routines": {0, 16}, "tun.routines": {1, 16}, "listen.routines": {1, 16},
+		"routines": {1, 16}, "tun.routines": {1, 16}, "listen.routines": {1, 16},
 		"lighthouse.interval": {0, 86400},
-		"tun.tx_queue":        {0, 65536}, "listen.batch": {0, 256},
+		"tun.tx_queue":        {1, 65536}, "listen.batch": {0, 256},
 		"listen.read_buffer": {0, 16 << 20}, "listen.write_buffer": {0, 16 << 20},
 		"handshakes.trigger_buffer": {0, 16384}, "handshakes.query_buffer": {0, 16384}, "handshakes.retries": {0, 32},
 	}
