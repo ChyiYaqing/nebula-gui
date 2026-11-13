@@ -88,6 +88,7 @@ type PrivilegedEngine struct {
 	conn          *net.UnixConn
 	reader        *bufio.Reader
 	nextID        uint64
+	sentIDs       map[string]bool
 	warning       error
 	helperRelease string
 	logs          logRing
@@ -116,9 +117,12 @@ func (e *PrivilegedEngine) dial() (*net.UnixConn, error) {
 	}
 	return unixConn, nil
 }
-func helperExchange(conn *net.UnixConn, reader *bufio.Reader, r helperRequest) (helperReply, error) {
+
+var helperExchangeTimeout = 10 * time.Second
+
+func helperExchange(conn *net.UnixConn, reader *bufio.Reader, r helperRequest, session *PrivilegedEngine) (helperReply, error) {
 	var reply helperReply
-	deadline := 10 * time.Second
+	deadline := helperExchangeTimeout
 	if r.Method == "health" {
 		deadline = time.Second
 	}
@@ -128,12 +132,37 @@ func helperExchange(conn *net.UnixConn, reader *bufio.Reader, r helperRequest) (
 	if err := json.NewEncoder(conn).Encode(r); err != nil {
 		return reply, err
 	}
-	b, err := readHelperFrame(reader)
-	if err != nil {
-		return reply, err
+	if session != nil {
+		if session.sentIDs == nil {
+			session.sentIDs = make(map[string]bool)
+		}
+		session.sentIDs[r.ID] = true
 	}
-	if json.Unmarshal(b, &reply) != nil || reply.Version != 1 || reply.ID != r.ID || reply.Revision != KernelRevision {
-		return reply, problem("helper_mismatch", "连接后台版本不匹配，请重新授权安装。", "")
+	for {
+		b, err := readHelperFrame(reader)
+		if err != nil {
+			return helperReply{}, err
+		}
+		reply = helperReply{}
+		if json.Unmarshal(b, &reply) != nil || reply.Version != 1 || reply.Revision != KernelRevision {
+			return reply, problem("helper_mismatch", "连接后台版本不匹配，请重新授权安装。", "")
+		}
+		if reply.ID == r.ID {
+			if session != nil {
+				delete(session.sentIDs, r.ID)
+			}
+			break
+		}
+		if session == nil || !session.sentIDs[reply.ID] {
+			return reply, problem("helper_mismatch", "连接后台版本不匹配，请重新授权安装。", "")
+		}
+		// Only requests still awaiting a reply stay recorded, so the set is bounded
+		// by the number of timeouts and an answered ID is never accepted twice.
+		delete(session.sentIDs, reply.ID)
+		// The helper's log cursor has advanced even though this reply arrived late.
+		for _, entry := range reply.Logs {
+			session.logs.add(entry)
+		}
 	}
 	if reply.Error != nil {
 		return reply, reply.Error
@@ -146,7 +175,7 @@ func (e *PrivilegedEngine) Authorization() AuthorizationStatus {
 		return AuthorizationStatus{Reason: "not_installed"}
 	}
 	defer conn.Close()
-	reply, err := helperExchange(conn, bufio.NewReader(conn), helperRequest{Version: 1, ID: "health", Method: "health"})
+	reply, err := helperExchange(conn, bufio.NewReader(conn), helperRequest{Version: 1, ID: "health", Method: "health"}, nil)
 	if err != nil {
 		return AuthorizationStatus{Reason: "unavailable"}
 	}
@@ -157,7 +186,7 @@ func (e *PrivilegedEngine) exchange(method, config string) (helperReply, error) 
 		return helperReply{}, helperUnavailable()
 	}
 	e.nextID++
-	reply, err := helperExchange(e.conn, e.reader, helperRequest{Version: 1, ID: stringID(e.nextID), Method: method, Config: config})
+	reply, err := helperExchange(e.conn, e.reader, helperRequest{Version: 1, ID: stringID(e.nextID), Method: method, Config: config}, e)
 	// Keep relayed entries even on failure: a rejected connect explains itself here.
 	// The local ring re-sequences and re-bounds them across helper sessions.
 	if reply.ID == stringID(e.nextID) {
@@ -190,6 +219,7 @@ func (e *PrivilegedEngine) Start(data []byte) error {
 	}
 	e.conn = conn
 	e.reader = bufio.NewReader(conn)
+	e.sentIDs = nil
 	reply, err := e.exchange("connect", string(data))
 	e.helperRelease = reply.HelperRelease
 	if err != nil || !reply.Started {
@@ -224,7 +254,7 @@ func (e *PrivilegedEngine) RecoverChecked() error {
 		return err
 	}
 	defer conn.Close()
-	reply, err := helperExchange(conn, bufio.NewReader(conn), helperRequest{Version: 1, ID: "recover", Method: "confirm_cleanup"})
+	reply, err := helperExchange(conn, bufio.NewReader(conn), helperRequest{Version: 1, ID: "recover", Method: "confirm_cleanup"}, nil)
 	if err != nil {
 		// Transport/protocol failure is uncertainty, not evidence of an old
 		// component. Only a correlated, valid reply can identify its version.
