@@ -84,6 +84,12 @@ final class AuthorizationTests: XCTestCase {
         XCTAssertFalse(try state(#"{"available":true,"helperRelease":"0.3.0","updateRequired":true}"#).supportsRecovery)
         XCTAssertFalse(try state(#"{"available":true,"helperRelease":"0.3.0"}"#).supportsRecovery)
         XCTAssertFalse(try state(#"{"available":false,"updateRequired":false}"#).supportsRecovery)
+        // #115: only an installed, mismatched component reported as later counts as newer.
+        XCTAssertTrue(try state(#"{"available":true,"helperRelease":"9.9.9","updateRequired":true,"helperNewer":true}"#).helperIsNewer)
+        XCTAssertFalse(try state(#"{"available":true,"helperRelease":"0.3.0","updateRequired":true,"helperNewer":false}"#).helperIsNewer)
+        XCTAssertFalse(try state(#"{"available":true,"helperRelease":"0.3.0","updateRequired":true}"#).helperIsNewer, "older backends omit the field")
+        XCTAssertFalse(try state(#"{"available":true,"updateRequired":false,"helperNewer":true}"#).helperIsNewer)
+        XCTAssertFalse(try state(#"{"available":false,"helperNewer":true}"#).helperIsNewer)
     }
     func testAbnormalBackendExitIsNotSuccessfulCleanup() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)

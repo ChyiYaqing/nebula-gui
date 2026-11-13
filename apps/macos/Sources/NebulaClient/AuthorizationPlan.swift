@@ -187,6 +187,9 @@ public struct AuthorizationState: Decodable, Sendable, Equatable {
     public let reason: String?
     public let helperRelease: String?
     public var updateRequired: Bool? = nil
+    /// The installed component is from a later release than this App (#115); "upgrading" would downgrade it.
+    public var helperNewer: Bool? = nil
+    public var helperIsNewer: Bool { available && updateRequired == true && helperNewer == true }
     public var supportsRecovery: Bool { available && updateRequired == false }
     public static let missing = AuthorizationState(available: false, revision: nil, reason: "not_installed", helperRelease: nil)
 }

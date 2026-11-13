@@ -113,8 +113,15 @@ extension AppModelTests {
             model.authorization = try JSONDecoder().decode(AuthorizationState.self, from: Data(json.utf8))
             await model.autoConnectIfNeeded()
             XCTAssertEqual(model.problem?.code, "auto_connect_skipped")
+            XCTAssertEqual(model.problem?.message, "连接后台未启用或需要升级，未自动连接。处理后可手动连接。")
             XCTAssertFalse(model.showAuthorizationReview)
         }
+        // #115: a component newer than this App is not described as needing an upgrade.
+        let newer = try startupModel(controlledBackend(), defaults: defaults)
+        newer.authorization = try JSONDecoder().decode(AuthorizationState.self, from: Data(#"{"available":true,"updateRequired":true,"helperNewer":true}"#.utf8))
+        await newer.autoConnectIfNeeded()
+        XCTAssertEqual(newer.problem?.message, "连接后台来自较新的 Nebula，未自动连接。请更新 Nebula，或在配置页处理后手动连接。")
+        XCTAssertFalse(newer.showAuthorizationReview)
 
         // A removed network is not replaced by another one.
         let removed = try startupModel(controlledBackend(), defaults: defaults)

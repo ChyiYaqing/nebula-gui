@@ -254,7 +254,7 @@ extension BackendClient: AppBackend {}
     var kernelLogNotice: String? {
         guard let page = kernelLogs else { return "正在读取…" }
         guard page.entries.isEmpty else { return nil }
-        if authorization.updateRequired == true { return "当前连接后台不提供内核日志，升级连接后台后可查看。" }
+        if authorization.updateRequired == true && !authorization.helperIsNewer { return "当前连接后台不提供内核日志，升级连接后台后可查看。" }
         if !page.available { return "当前连接后台不提供内核日志。" }
         return "暂无内核日志。连接网络后，Nebula 的启动、握手和错误信息会显示在这里。"
     }
@@ -390,7 +390,7 @@ extension BackendClient: AppBackend {}
             problem = BackendProblem(code: "auto_connect_skipped", message: "上次使用的网络已移除，未自动连接。"); return
         }
         guard authorization.available, authorization.updateRequired != true else {
-            problem = BackendProblem(code: "auto_connect_skipped", message: "连接后台未启用或需要升级，未自动连接。处理后可手动连接。"); return
+            problem = BackendProblem(code: "auto_connect_skipped", message: authorization.helperIsNewer ? "连接后台来自较新的 Nebula，未自动连接。请更新 Nebula，或在配置页处理后手动连接。" : "连接后台未启用或需要升级，未自动连接。处理后可手动连接。"); return
         }
         selectedID = id
         await connectSelected()
