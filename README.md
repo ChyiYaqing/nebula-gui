@@ -2,7 +2,7 @@
 
 面向普通用户的原生 macOS Nebula 客户端。导入 `config.yaml`、CA 证书、主机证书与密钥后，保存独立副本并通过菜单栏管理连接。后续平台顺序为 iOS、Linux。
 
-**当前候选版本为 v0.1.0-rc6。** 支持配置管理、会话内异常恢复、唤醒后状态同步与网络刷新、节点 ICMP 诊断与延迟监测、证书通知、日志页、登录时启动、网络组件升级及 App 内软件更新。此前 v0.2／v0.3.1 为内部开发编号，相关本机验证结果仍见验证记录；rc6 的 App 为 0.1.0/build 11（rc5 为 build 10，rc4 为 build 9，rc3 为 build 8，rc2 为 build 7，rc1 为 build 5），helper 兼容发布号为 0.4.1（rc1 为 0.3.1）。rc2 是首个内置更新签名公钥的版本，从 rc1 需手动安装一次；rc2 起可在 App 内更新；rc4 起下载失败时会改用 API 地址重试。产物为 ad-hoc 签名、未公证的测试包，干净机器和跨系统／架构验收尚未完成。已有组件需在 GUI 选择“升级后台”，主动确认后通过 macOS 系统窗口批准。候选包与触发方式见 [发布说明](docs/RELEASE.md)。
+**当前候选版本为 v0.1.0-rc7。** 支持配置管理、会话内异常恢复、唤醒后状态同步与网络刷新、节点 ICMP 诊断与延迟监测、证书通知、日志页、登录时启动、网络组件升级及 App 内软件更新。此前 v0.2／v0.3.1 为内部开发编号，相关本机验证结果仍见验证记录；rc7 的 App 为 0.1.0/build 12（rc6 为 build 11，rc5 为 build 10，rc4 为 build 9，rc3 为 build 8，rc2 为 build 7，rc1 为 build 5），helper 兼容发布号为 0.4.2（rc2 至 rc6 为 0.4.1，rc1 为 0.3.1），从 rc2 至 rc6 更新后需“升级后台”一次。rc2 是首个内置更新签名公钥的版本，从 rc1 需手动安装一次；rc2 起可在 App 内更新；rc4 起下载失败时会改用 API 地址重试。产物为 ad-hoc 签名、未公证的测试包，干净机器和跨系统／架构验收尚未完成。已有组件需在 GUI 选择“升级后台”，主动确认后通过 macOS 系统窗口批准。候选包与触发方式见 [发布说明](docs/RELEASE.md)。
 
 ## 使用的 Nebula 版本
 
@@ -10,8 +10,8 @@ GUI 将 **Nebula v1.12.0 的 Go 源码库**编译进后台组件，隧道由 hel
 
 | 项目 | 当前值 | 核对位置 |
 | --- | --- | --- |
-| App 发行标识 | `0.1.0-rc6` | [VERSION](VERSION) |
-| macOS 包版本／构建号 | `0.1.0`；rc6 为 build `11`，rc5 为 build `10`，rc4 为 build `9`，rc3 为 build `8`，rc2 为 build `7`，rc1 为 build `5` | [构建脚本](scripts/build.sh)、对应附件的 `build-info.json` |
+| App 发行标识 | `0.1.0-rc7` | [VERSION](VERSION) |
+| macOS 包版本／构建号 | `0.1.0`；rc7 为 build `12`，rc6 为 build `11`，rc5 为 build `10`，rc4 为 build `9`，rc3 为 build `8`，rc2 为 build `7`，rc1 为 build `5` | [构建脚本](scripts/build.sh)、对应附件的 `build-info.json` |
 | Nebula 上游版本 | `v1.12.0` | [上游 tag](https://github.com/slackhq/nebula/tree/v1.12.0) |
 | 固定内核提交 | `fb4ef139cbb4af67d142c72083fb735f56460e50` | [kernel-revision](scripts/kernel-revision)、[KernelRevision](backend/internal/client/model.go) |
 | helper 兼容发布号 | `0.4.2` | [HelperRelease](backend/internal/client/privileged_darwin.go) |
