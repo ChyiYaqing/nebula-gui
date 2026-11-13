@@ -13,19 +13,22 @@ import (
 
 // Service is owned by one serial request loop. No externally reachable listener exists.
 type Service struct {
-	store     *Store
-	engine    Engine
-	active    string
-	failure   *Problem
-	events    []Event
-	startedAt *time.Time
+	store       *Store
+	engine      Engine
+	active      string
+	failure     *Problem
+	events      []Event
+	startedAt   *time.Time
+	otherNebula func() bool
 	// lastSample and sampleOne back the periodic latency monitor (sample.go).
 	lastSample time.Time
 	sampleOne  func(context.Context, string, netip.Addr) LatencySample
 }
 
-func NewService(s *Store, e Engine) *Service { return &Service{store: s, engine: e, events: []Event{}} }
-func (s *Service) Close() error              { err := stopEngine(s.engine); s.active = ""; return err }
+func NewService(s *Store, e Engine) *Service {
+	return &Service{store: s, engine: e, events: []Event{}, otherNebula: otherNebulaRunning}
+}
+func (s *Service) Close() error { err := stopEngine(s.engine); s.active = ""; return err }
 func stopEngine(e Engine) error {
 	if checked, ok := e.(interface{ StopChecked() error }); ok {
 		return checked.StopChecked()
@@ -210,6 +213,9 @@ func (s *Service) invoke(r Request) (any, error) {
 			var issue *Problem
 			if !errors.As(err, &issue) {
 				issue = &Problem{Code: "start_failed", Message: "连接失败。"}
+			}
+			if issue.Code == "start_failed" && s.otherNebula() {
+				issue = &Problem{Code: "other_nebula_running", Message: "检测到本机另有一个 Nebula 进程在运行，它可能占用了同一网络或端口，连接未能建立。请先停用它（例如旧的命令行或系统服务部署），再重新连接。"}
 			}
 			s.failure = issue
 			if issue.Code == "cleanup_incomplete" {
