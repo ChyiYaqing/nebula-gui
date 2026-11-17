@@ -254,4 +254,17 @@ extension AppModelTests {
         XCTAssertEqual(model.menuActionTitle, "断开连接")
         _ = await model.shutdown()
     }
+    /// The menu's connection tile states what is happening; its switch keeps the action as its label.
+    func testConnectionTileWordsFollowTheTunnel() throws {
+        let model = try model(controlledBackend())
+        XCTAssertEqual(ConnectionTileWords(model: model).state, "未连接")
+        XCTAssertEqual(ConnectionTileWords(model: model).caption, "打开开关即连接")
+        model.authorization = try JSONDecoder().decode(AuthorizationState.self, from: Data(#"{"available":false}"#.utf8))
+        XCTAssertEqual(ConnectionTileWords(model: model).caption, "需先启用连接后台")
+        XCTAssertEqual(model.menuActionTitle, "启用连接后台")
+        model.status = started("first")
+        XCTAssertEqual(ConnectionTileWords(model: model).state, "已连接")
+        model.connectionBusy = true
+        XCTAssertEqual(ConnectionTileWords(model: model).state, "处理中", "busy wins over connected")
+    }
 }
