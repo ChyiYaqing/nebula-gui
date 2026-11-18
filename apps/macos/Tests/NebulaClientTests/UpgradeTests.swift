@@ -64,7 +64,7 @@ final class UpgradeTests: XCTestCase {
             XCTAssertTrue(FileManager.default.fileExists(atPath: root.appendingPathComponent("loaded").path), scenario)
             let commands = try String(contentsOf: root.appendingPathComponent("commands"), encoding: .utf8)
             if scenario != "checksum-failure" { XCTAssertTrue(commands.contains("bootout system/net.nebula.gui.helper"), scenario) }
-            XCTAssertFalse(FileManager.default.fileExists(atPath: installed.deletingLastPathComponent().appendingPathComponent(".install-lock").path))
+            XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: installed.deletingLastPathComponent().path), ["nebula-gui-helper"], scenario)
         }
     }
     func testUninstallStopsHelperWithoutWaitFlag() throws {
@@ -100,6 +100,64 @@ final class UpgradeTests: XCTestCase {
     }
     /// Mirrors macOS 13 launchctl: `bootout --wait` is a usage error (64), the
     /// failure seen on a real 13.7.8 upgrade. No system job is ever called.
+    /// #118: a lock left by a killed transaction or a power loss must not block the GUI forever,
+    /// while a transaction that is still running keeps its lock.
+    func testLeftoverLockIsReclaimedButLiveHolderIsRespected() throws {
+        let sysctl = Process(); let output = Pipe()
+        sysctl.executableURL = URL(fileURLWithPath: "/usr/sbin/sysctl"); sysctl.arguments = ["-n", "kern.boottime"]
+        sysctl.standardOutput = output; try sysctl.run(); sysctl.waitUntilExit()
+        let text = String(decoding: output.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+        let boot = try XCTUnwrap(text.split(separator: " ").dropFirst(3).first?.dropLast())
+        // A process that has exited: its pid is not running (reuse within this test is not expected).
+        let gone = Process(); gone.executableURL = URL(fileURLWithPath: "/usr/bin/true"); try gone.run(); gone.waitUntilExit()
+        let old = Date(timeIntervalSinceNow: -3600)
+        let scenarios: [(name: String, lock: String?, legacy: Date?, reclaimed: Bool)] = [
+            ("holder exited", "\(gone.processIdentifier) \(boot)\n", nil, true),
+            ("restarted since", "\(getpid()) 1\n", nil, true),
+            ("holder running", "\(getpid()) \(boot)\n", nil, false),
+            ("unreadable holder", "not-a-pid \(boot)\n", nil, false),
+            ("old directory lock", nil, old, true),
+            ("recent directory lock", nil, Date(), false),
+        ]
+        for scenario in scenarios {
+            let root = FileManager.default.temporaryDirectory.appendingPathComponent("ng-lock-" + UUID().uuidString)
+            defer { try? FileManager.default.removeItem(at: root) }
+            let library = root.appendingPathComponent("Library")
+            let installed = root.appendingPathComponent(String(AuthorizationPlan.helperPath.dropFirst()))
+            let plist = root.appendingPathComponent(String(AuthorizationPlan.plistPath.dropFirst()))
+            let directory = installed.deletingLastPathComponent()
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            try FileManager.default.createDirectory(at: plist.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try Data("old helper".utf8).write(to: installed); try Data("old plist".utf8).write(to: plist)
+            try Data().write(to: root.appendingPathComponent("loaded"))
+            if let lock = scenario.lock { try Data(lock.utf8).write(to: directory.appendingPathComponent(".install.lock")) }
+            if let legacy = scenario.legacy {
+                let lock = directory.appendingPathComponent(".install-lock")
+                try FileManager.default.createDirectory(at: lock, withIntermediateDirectories: false)
+                try FileManager.default.setAttributes([.modificationDate: legacy], ofItemAtPath: lock.path)
+            }
+            let launchctl = root.appendingPathComponent("launchctl")
+            try writeLaunchctl(to: launchctl)
+            let script = AuthorizationPlan.uninstall().script.replacingOccurrences(of: "/Library", with: library.path)
+                .replacingOccurrences(of: "/bin/launchctl", with: AuthorizationPlan.shellQuote(launchctl.path))
+                .replacingOccurrences(of: " = 0 ]", with: " = \(getuid()) ]")
+            let file = root.appendingPathComponent("uninstall.sh")
+            try Data(script.utf8).write(to: file)
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/bin/sh"); process.arguments = [file.path]
+            process.standardOutput = FileHandle.nullDevice; process.standardError = FileHandle.nullDevice
+            try process.run(); process.waitUntilExit()
+            let left = try FileManager.default.contentsOfDirectory(atPath: directory.path).sorted()
+            if scenario.reclaimed {
+                XCTAssertEqual(process.terminationStatus, 0, scenario.name)
+                XCTAssertEqual(left, [], scenario.name)
+            } else {
+                XCTAssertEqual(process.terminationStatus, 79, scenario.name)
+                XCTAssertEqual(left, [scenario.lock == nil ? ".install-lock" : ".install.lock", "nebula-gui-helper"], scenario.name)
+                XCTAssertTrue(FileManager.default.fileExists(atPath: root.appendingPathComponent("loaded").path), scenario.name)
+            }
+        }
+    }
     private func writeLaunchctl(to url: URL) throws {
         try writeExecutable(#"""
         #!/usr/bin/python3
